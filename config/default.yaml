@@ -35,6 +35,9 @@ gemini:
   cache_dir: .cache/gemini
 
 embeddings:
+  # "sentence-transformers" (real model, downloaded once) or "hashing"
+  # (offline word matching, used by tests and CI).
+  provider: sentence-transformers
   model: BAAI/bge-small-en-v1.5
   device: cpu
 

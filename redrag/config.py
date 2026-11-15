@@ -62,6 +62,9 @@ class GeminiConfig(_Section):
 
 
 class EmbeddingsConfig(_Section):
+    # "sentence-transformers" = the real model below; "hashing" = a tiny offline
+    # word-matching embedder used by tests and CI (no model download).
+    provider: Literal["sentence-transformers", "hashing"] = "sentence-transformers"
     model: str = "BAAI/bge-small-en-v1.5"
     device: str = "cpu"
 
@@ -126,6 +129,7 @@ class Config(_Section):
 ENV_OVERRIDES: dict[str, tuple[str, str]] = {
     "REDRAG_TARGET_URL": ("target", "url"),
     "REDRAG_LLM_PROVIDER": ("llm", "provider"),
+    "REDRAG_EMBEDDINGS_PROVIDER": ("embeddings", "provider"),
     "OLLAMA_HOST": ("ollama", "host"),
     "OLLAMA_VICTIM_MODEL": ("ollama", "victim_model"),
     "OLLAMA_ATTACKER_MODEL": ("ollama", "attacker_model"),

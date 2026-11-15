@@ -46,9 +46,38 @@ def report() -> None:
 
 
 @app.command("serve-target")
-def serve_target() -> None:
+def serve_target(
+    host: str | None = typer.Option(None, help="Address to bind. Default: target.host in config."),
+    port: int | None = typer.Option(None, help="Port to bind. Default: target.port in config."),
+    mock: bool = typer.Option(
+        False, "--mock", help="Use the offline MockClient instead of Ollama."
+    ),
+    offline_embeddings: bool = typer.Option(
+        False,
+        "--offline-embeddings",
+        help="Use the hashing embedder instead of downloading bge-small.",
+    ),
+) -> None:
     """Start the deliberately vulnerable target RAG app (FastAPI)."""
-    _not_built_yet("serve-target", "M1")
+    # Imported here so `redrag --help` stays fast (these pull in FastAPI and Chroma).
+    import uvicorn
+
+    from redrag.target.app import create_app
+
+    config = load_config()
+    if mock:
+        config.llm.provider = "mock"
+    if offline_embeddings:
+        config.embeddings.provider = "hashing"
+
+    host = host or config.target.host
+    port = port or config.target.port
+    model = "MockClient" if config.llm.provider == "mock" else config.ollama.victim_model
+    console.print(f"[bold]Campus Handbook Assistant[/] using [cyan]{model}[/]")
+    console.print(f"Building the knowledge base ({config.embeddings.provider} embeddings)...")
+    target_app = create_app(config)
+    console.print(f"API docs: [link]http://{host}:{port}/docs[/]")
+    uvicorn.run(target_app, host=host, port=port)
 
 
 @app.command()

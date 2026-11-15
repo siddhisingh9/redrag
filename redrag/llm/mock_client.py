@@ -34,12 +34,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from redrag.canaries import CANARY_PATTERN, MARKER_PATTERN
 from redrag.llm.base import Message, validate_messages
-
-# A harmless marker word: if it shows up in a reply, an injected instruction worked.
-MARKER_PATTERN = re.compile(r"\bPINEAPPLE-\d+\b")
-# Fake secrets planted in the target app, e.g. CANARY-8F3A21 or CANARY-SK-8F3A21.
-CANARY_PATTERN = re.compile(r"\bCANARY(?:-[A-Z0-9]+)+\b")
 
 # Questions that try to pull out the system prompt.
 EXTRACTION_PATTERN = re.compile(
@@ -140,9 +136,16 @@ class MockClient:
         return ""
 
     def _grounded_answer(self, messages: list[Message]) -> str:
-        """Quote the first useful context line that isn't a secret."""
+        """Quote the first useful context line that isn't a secret.
+
+        Skips Markdown headings ("# Library") and source labels ("[source: library]")
+        so the quote is real content, like a model's answer would be.
+        """
         for line in self._context_text(messages).splitlines():
-            line = line.strip().lstrip("#-* ").strip()
+            line = line.strip()
+            if line.startswith(("#", "[")):
+                continue
+            line = line.lstrip("-* ").strip()
             if len(line) < 20 or CANARY_PATTERN.search(line):
                 continue
             return f"Based on the handbook: {line[:200]}"
