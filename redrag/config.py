@@ -114,6 +114,14 @@ class OutputConfig(_Section):
     runs_dir: str = "runs"
 
 
+class TracingConfig(_Section):
+    # Off by default, so scans work without Phoenix running. Turn on with --trace.
+    enabled: bool = False
+    # Phoenix's OpenTelemetry endpoint (start Phoenix with `phoenix serve`).
+    endpoint: str = "http://localhost:6006/v1/traces"
+    project: str = "redrag"
+
+
 class Config(_Section):
     """The full RedRAG configuration. Each attribute matches a top-level YAML key."""
 
@@ -127,6 +135,7 @@ class Config(_Section):
     judge: JudgeConfig = Field(default_factory=JudgeConfig)
     attacks: AttacksConfig = Field(default_factory=AttacksConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
+    tracing: TracingConfig = Field(default_factory=TracingConfig)
 
 
 # Which environment variable overrides which config value: (section, key).
@@ -146,6 +155,8 @@ ENV_OVERRIDES: dict[str, tuple[str, str]] = {
     "REDRAG_LABELS_FILE": ("judge", "labels_file"),
     "REDRAG_DATASET_DIR": ("judge", "dataset_dir"),
     "REDRAG_RUNS_DIR": ("output", "runs_dir"),
+    "REDRAG_TRACING": ("tracing", "enabled"),
+    "REDRAG_TRACING_ENDPOINT": ("tracing", "endpoint"),
 }
 
 

@@ -1,4 +1,4 @@
-"""Writes `runs/<run_id>/report.md`. Built in M2; the HTML report with charts comes in M5.
+"""Writes `runs/<run_id>/report.md` (and, via html_report.py, `report.html`).
 
 The report is built only from files in the run folder (`run.json` and
 `results.jsonl`), so `redrag report <run_dir>` can rebuild it any time, for
@@ -8,14 +8,19 @@ example after the judge improves.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 from redrag.attacks.schema import AttackResult
+from redrag.eval.benign import BenignResult, load_benign_results
 from redrag.eval.metrics import (
+    ASRStat,
+    FRRStat,
     asr_table,
     best_per_seed,
     compute_asr,
     defense_configs,
+    frr_by_config,
     original_attempts,
 )
 
@@ -56,13 +61,114 @@ def write_markdown_report(run_dir: Path, agreement: dict | None = None) -> Path:
     """
     results = load_results(run_dir)
     info = load_run_info(run_dir)
-    report = render_markdown(results, info, agreement)
+    report = render_markdown(results, info, agreement, load_benign_results(run_dir))
     path = run_dir / REPORT_FILE
     path.write_text(report, encoding="utf-8")
     return path
 
 
-def render_markdown(results: list[AttackResult], info: dict, agreement: dict | None = None) -> str:
+@dataclass
+class DefenseRow:
+    """One defense configuration's headline numbers, for the trade-off table and charts."""
+
+    config: str
+    defenses: list[str]
+    asr: ASRStat
+    frr: FRRStat | None
+
+
+def defense_summary(
+    results: list[AttackResult], benign: list[BenignResult], agent_mode: bool
+) -> list[DefenseRow]:
+    """ASR (after the agent, in agent runs) and FRR for each defense configuration."""
+    attacks = best_per_seed(results) if agent_mode else results
+    frr = frr_by_config(benign)
+    rows = []
+    for config in defense_configs(results) or list(frr):
+        config_results = [r for r in attacks if r.defense_config == config]
+        defenses = next((r.defenses for r in config_results if r.defenses), [])
+        if not defenses:
+            defenses = next((b.defenses for b in benign if b.defense_config == config), [])
+        rows.append(DefenseRow(config, defenses, compute_asr(config_results), frr.get(config)))
+    return rows
+
+
+def best_tradeoff(rows: list[DefenseRow]) -> DefenseRow | None:
+    """The configuration with the lowest ASR + FRR (ties: fewer defenses)."""
+    scored = [r for r in rows if r.asr.asr is not None and r.frr and r.frr.frr is not None]
+    if not scored:
+        return None
+    return min(scored, key=lambda r: (r.asr.asr + r.frr.frr, len(r.defenses)))
+
+
+def _pct(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.0%}"
+
+
+def _tradeoff_section(rows: list[DefenseRow]) -> list[str]:
+    lines = [
+        "## Security vs usefulness",
+        "",
+        "For each defense configuration: how many attacks still got through (ASR, lower "
+        "is better), how many harmless questions a defense wrongly blocked (FRR, lower is "
+        "better), and how many harmless questions got a useful answer (higher is better).",
+        "",
+        "| Configuration | Defenses on | ASR | FRR | Useful answers |",
+        "|---|---|---|---|---|",
+    ]
+    for row in rows:
+        frr = row.frr.format() if row.frr else "n/a"
+        useful = _pct(row.frr.usefulness) if row.frr else "n/a"
+        defenses = ", ".join(row.defenses) or "none"
+        lines.append(f"| `{row.config}` | {defenses} | {row.asr.format()} | {frr} | {useful} |")
+    best = best_tradeoff(rows)
+    if best is not None:
+        lines += [
+            "",
+            f"Lowest ASR + FRR: `{best.config}` (ASR {_pct(best.asr.asr)}, "
+            f"FRR {_pct(best.frr.frr)}).",
+        ]
+    return [*lines, ""]
+
+
+def _false_refusal_section(benign: list[BenignResult]) -> list[str]:
+    """Which harmless questions were blocked, by which defense, under which configurations."""
+    blocked: dict[str, dict] = {}
+    for result in benign:
+        if result.blocked_by is None:
+            continue
+        entry = blocked.setdefault(
+            result.question_id,
+            {"question": result.question, "tricky": result.tricky, "by": set(), "configs": []},
+        )
+        entry["by"].add(result.blocked_by)
+        entry["configs"].append(result.defense_config)
+    lines = ["## Harmless questions that were blocked", ""]
+    if not blocked:
+        return [*lines, "None: no defense blocked a harmless question.", ""]
+    lines += [
+        "*Tricky* questions sound like attacks but are harmless.",
+        "",
+        "| Question | Tricky | Blocked by | Under configurations |",
+        "|---|---|---|---|",
+    ]
+    for question_id in sorted(blocked):
+        entry = blocked[question_id]
+        configs = ", ".join(f"`{c}`" for c in entry["configs"])
+        lines.append(
+            f"| {_cell(entry['question'])} | {'yes' if entry['tricky'] else ''} "
+            f"| {', '.join(sorted(entry['by']))} | {configs} |"
+        )
+    return [*lines, ""]
+
+
+def render_markdown(
+    results: list[AttackResult],
+    info: dict,
+    agreement: dict | None = None,
+    benign: list[BenignResult] | None = None,
+) -> str:
+    benign = benign or []
     configs = defense_configs(results)
     agent_mode = info.get("mode") == "agent" or any(r.attempt > 0 for r in results)
     # In agent mode, "best" = one result per seed (did ANY variant break through?).
@@ -121,6 +227,10 @@ def render_markdown(results: list[AttackResult], info: dict, agreement: dict | N
             cells = [stats[config].format() for config in configs]
             lines.append(f"| {CATEGORY_NAMES.get(row, row)} | " + " | ".join(cells) + " |")
     lines.append("")
+
+    if benign:
+        lines += _tradeoff_section(defense_summary(results, benign, agent_mode))
+        lines += _false_refusal_section(benign)
 
     if agent_mode:
         lines += _agent_section(results, configs)

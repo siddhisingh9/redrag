@@ -85,3 +85,10 @@ attacks:
 
 output:
   runs_dir: runs
+
+tracing:
+  # Send a trace of every attack to Arize Phoenix. Start Phoenix first with
+  # `phoenix serve` (UI at http://localhost:6006), then scan with --trace.
+  enabled: false
+  endpoint: http://localhost:6006/v1/traces
+  project: redrag

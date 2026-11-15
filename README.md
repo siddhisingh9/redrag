@@ -6,7 +6,7 @@ RedRAG attacks a RAG chatbot, detects when it leaks data or obeys injected
 instructions, scores each attempt with a judge pipeline (rules → fine-tuned
 small classifier → Gemini as backup), and measures how much each defense helps.
 
-> **Status:** early development, milestone **M4 (fine-tuned judge)**.
+> **Status:** early development, milestone **M5 (defense evaluation + tracing)**.
 > `serve-target`, `scan`, `report` and `show-config` work; `mcp` comes in M6.
 
 Everything runs on free tools: local models through Ollama, and the Gemini API
@@ -169,8 +169,45 @@ Each scan creates `runs/<timestamp>/` with:
 | File | Contents |
 |---|---|
 | `results.jsonl` | One line per attack: full transcript, retrieved docs, judge verdicts, latency, models |
+| `benign.jsonl` | One line per harmless question per configuration: answer, blocked or not, useful or not |
 | `run.json` | Scan settings: target, model, defense configurations, attack ids |
-| `report.md` | ASR per category for each defense configuration, what blocked what, attacks that got through |
+| `report.html` | **Open this.** Headline numbers, charts, and every table below |
+| `report.md` | The same tables as Markdown |
+
+### Measuring defenses: security vs usefulness
+
+A defense that blocks everything stops every attack, and is useless. So every
+scan also asks **50 harmless handbook questions** under each configuration
+(`--no-benign` to skip), including 10 *tricky* ones that sound like attacks
+("Pretend you're a fresher: what happens in orientation week?"). The report shows:
+
+- **ASR**, attack success rate: attacks that got through (lower is better)
+- **FRR**, false-refusal rate: harmless questions a defense wrongly blocked (lower is better)
+- **Useful answers**: harmless questions answered with the expected facts (higher is better)
+
+```bash
+redrag scan --all-combinations            # every on/off mix of the defenses (8, or 16 with judge_guard)
+redrag scan --all-combinations --max-attacks 20   # quicker: 4 attacks per category
+```
+
+The HTML report plots ASR against FRR for every combination, so the best trade-off
+(bottom-left) is easy to spot.
+
+### Tracing with Arize Phoenix
+
+Every attack becomes one trace: the scanner's HTTP calls, and inside them the
+target's retrieval (documents + scores), the exact LLM prompt and answer, each
+defense's decision, and every judge layer's vote.
+
+```bash
+phoenix serve                             # terminal 1: trace viewer at http://localhost:6006
+redrag serve-target --trace               # terminal 2: the target sends its spans too
+redrag scan --trace                       # terminal 3
+```
+
+Open http://localhost:6006, pick the **redrag** project and click any trace.
+Tracing is off unless you pass `--trace` (or set `tracing.enabled: true`), so
+nothing breaks when Phoenix isn't running.
 
 For a real model, a full scan (55 attacks × 2 configurations) takes several minutes.
 
@@ -305,7 +342,8 @@ redrag/
   attacks/                 attack schema, 55 seed attacks, poisoned-doc builder
   agent/                   LangGraph adaptive attacker + attack rewriters (mutators)
   judge/                   rules -> fine-tuned classifier -> Gemini judge pipeline
-  eval/                    metrics, reports, hand labels, dataset export, judge agreement
+  eval/                    metrics (ASR/FRR), reports (MD + HTML charts), labels, dataset, judge agreement
+  tracing.py               OpenTelemetry spans -> Arize Phoenix
 data/labels/               your hand labels + latest judge agreement (commit these)
 data/judge_dataset/        exported train/val/test for the notebook
 models/judge-deberta/      the trained judge (gitignored; copied from Kaggle/Colab)
@@ -328,8 +366,8 @@ tests/                     offline pytest suite
 | M1 | Vulnerable target RAG app + defenses | ✅ |
 | M2 | Attack library, rule judge, basic scan + report | ✅ |
 | M3 | LangGraph adaptive attacker | ✅ |
-| M4 | Fine-tuned judge (DeBERTa-v3-small) + Gemini backup judge | ✅ in review (Gemini row needs an API key) |
-| M5 | Defense evaluation (ASR/FRR), HTML report, tracing | ⏳ |
+| M4 | Fine-tuned judge (DeBERTa-v3-small) + Gemini backup judge | ✅ (Gemini row skipped: no API key) |
+| M5 | Defense evaluation (ASR/FRR), HTML report, tracing | ✅ in review |
 | M6 | MCP server + GitHub Actions gate | ⏳ |
 | M7 | Dashboard + README polish | ⏳ |
 

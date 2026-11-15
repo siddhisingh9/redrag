@@ -21,9 +21,10 @@ import logging
 import threading
 from typing import Protocol
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from redrag import tracing
 from redrag.config import Config, load_config
 from redrag.llm import LLMClient, LLMError, Message, build_local_client
 from redrag.target import defenses
@@ -150,24 +151,49 @@ def create_app(
     @app.post("/chat", response_model=ChatResponse)
     def chat(
         request: ChatRequest,
+        http_request: Request,
         x_redrag_defenses: str | None = Header(default=None, alias="X-RedRAG-Defenses"),
     ) -> ChatResponse:
         active = active_defenses(x_redrag_defenses)
+        # If the scanner sent a trace id, our spans join its trace.
+        with tracing.span(
+            "target /chat",
+            input=request.message,
+            attributes={
+                "redrag.session_id": request.session_id,
+                "redrag.defenses": defenses.describe(active),
+            },
+            context=tracing.extract_context(http_request.headers),
+        ) as chat_span:
+            response = answer_question(request, active)
+            tracing.set_output(chat_span, response.answer)
+            tracing.set_attributes(chat_span, {"redrag.blocked_by": response.blocked_by})
+            return response
 
+    def answer_question(request: ChatRequest, active: frozenset[str]) -> ChatResponse:
+        """The RAG pipeline with its defenses; each step is a span when tracing is on."""
         # Defense 1: block obvious injection phrases before doing anything else.
-        if "input_filter" in active and defenses.check_input(request.message).blocked:
-            answer = defenses.INPUT_REFUSAL
-            _remember(sessions, lock, request, answer)
-            return ChatResponse(
-                answer=answer,
-                retrieved_doc_ids=[],
-                defenses=defenses.describe(active),
-                blocked_by="input_filter",
-            )
+        if "input_filter" in active:
+            with tracing.span("input_filter", kind="GUARDRAIL", input=request.message) as span:
+                check = defenses.check_input(request.message)
+                tracing.set_attributes(
+                    span, {"output.value": "blocked" if check.blocked else "passed"}
+                )
+            if check.blocked:
+                answer = defenses.INPUT_REFUSAL
+                _remember(sessions, lock, request, answer)
+                return ChatResponse(
+                    answer=answer,
+                    retrieved_doc_ids=[],
+                    defenses=defenses.describe(active),
+                    blocked_by="input_filter",
+                )
 
-        with lock:
-            chunks = pipeline.retrieve(request.message)
-            history = list(sessions.get(request.session_id, []))
+        with tracing.span("retrieve", kind="RETRIEVER", input=request.message) as span:
+            with lock:
+                chunks = pipeline.retrieve(request.message)
+                history = list(sessions.get(request.session_id, []))
+            tracing.set_attributes(span, tracing.retrieval_attributes(chunks))
 
         # Defense 2 happens inside build_messages (sanitise=True).
         messages = build_messages(
@@ -177,15 +203,22 @@ def create_app(
             sanitise="context_sanitiser" in active,
         )
 
-        try:
-            answer = llm.generate(messages)
-        except LLMError as exc:
-            raise HTTPException(status_code=502, detail=f"LLM error: {exc}") from exc
+        with tracing.span(
+            "llm", kind="LLM", attributes=tracing.llm_attributes(llm.model, messages)
+        ) as span:
+            try:
+                answer = llm.generate(messages)
+            except LLMError as exc:
+                raise HTTPException(status_code=502, detail=f"LLM error: {exc}") from exc
+            tracing.set_attributes(span, tracing.llm_attributes(llm.model, [], answer))
+            tracing.set_output(span, answer)
 
         # Defense 3: check the answer before it leaves the app.
         blocked_by = None
         if "output_leak_filter" in active:
-            result = defenses.check_output(answer, SYSTEM_PROMPT, user_message=request.message)
+            with tracing.span("output_leak_filter", kind="GUARDRAIL", input=answer) as span:
+                result = defenses.check_output(answer, SYSTEM_PROMPT, user_message=request.message)
+                tracing.set_attributes(span, {"output.value": result.reason or "passed"})
             if result.blocked:
                 logger.info("output_leak_filter blocked an answer: %s", result.reason)
                 answer = defenses.OUTPUT_REFUSAL
@@ -194,7 +227,9 @@ def create_app(
         # Defense 4: the fine-tuned judge reads the answer; block if it looks like
         # a successful attack. The goal is unknown here, so it checks all goal types.
         if "judge_guard" in active and blocked_by is None and guard is not None:
-            probability = guard.score_any_goal([answer])
+            with tracing.span("judge_guard", kind="GUARDRAIL", input=answer) as span:
+                probability = guard.score_any_goal([answer])
+                tracing.set_attributes(span, {"redrag.p_success": probability})
             if probability >= config.judge.guard_threshold:
                 logger.info("judge_guard blocked an answer (P(success) = %.2f)", probability)
                 answer = defenses.OUTPUT_REFUSAL

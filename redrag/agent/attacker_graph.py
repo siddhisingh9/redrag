@@ -42,6 +42,7 @@ from langgraph.graph import END, START, StateGraph
 
 from redrag.agent.mutators import Feedback, Mutator, choose_strategy
 from redrag.attacks.schema import Attack, AttackResult
+from redrag.eval.benign import BENIGN_RESULTS_FILE, BenignQuestion, BenignResult
 from redrag.judge.pipeline import JudgePipeline
 from redrag.runner import (
     AttackExecutor,
@@ -50,6 +51,7 @@ from redrag.runner import (
     ScanSummary,
     TargetClient,
     normalise_defense_config,
+    run_benign,
     start_run,
 )
 
@@ -207,6 +209,8 @@ def run_agent_scan(
     run_id: str | None = None,
     on_result: Callable[[AttackResult], None] | None = None,
     on_seed_done: Callable[[Attack, AttackResult], None] | None = None,
+    benign_questions: list[BenignQuestion] | None = None,
+    on_benign: Callable[[BenignResult], None] | None = None,
 ) -> ScanSummary:
     """Like `run_scan`, but failed seeds get rewritten and retried by the agent.
 
@@ -222,14 +226,28 @@ def run_agent_scan(
         runs_dir,
         target_url,
         run_id,
-        extra_info={"mode": "agent", "max_attempts": max_attempts, "mutator": mutator.name},
+        extra_info={
+            "mode": "agent",
+            "max_attempts": max_attempts,
+            "mutator": mutator.name,
+            "benign_count": len(benign_questions or []),
+        },
     )
     executor = AttackExecutor(target, judge, context.run_id, context.target_model)
     agent = AttackerAgent(executor, mutator, max_attempts)
 
-    with RunRecorder(context.run_dir, on_result) as recorder:
+    with (
+        RunRecorder(context.run_dir, on_result) as recorder,
+        RunRecorder(context.run_dir, on_benign, BENIGN_RESULTS_FILE) as benign_recorder,
+    ):
         for config in configs:
             agent.run(attacks, config, on_result=recorder.record, on_seed_done=on_seed_done)
+            run_benign(executor, benign_questions or [], config, benign_recorder.record)
         executor.reset()
 
-    return ScanSummary(run_id=context.run_id, run_dir=context.run_dir, results=recorder.results)
+    return ScanSummary(
+        run_id=context.run_id,
+        run_dir=context.run_dir,
+        results=recorder.results,
+        benign_results=benign_recorder.results,
+    )

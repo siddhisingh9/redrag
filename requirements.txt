@@ -33,6 +33,14 @@ peft==0.21.3
 matplotlib==3.10.9
 streamlit==1.65.0
 
+# --- Observability (M5): tracing to Arize Phoenix --------------------------
+# Phoenix is the local trace viewer (`phoenix serve`, UI at localhost:6006).
+# Note: Phoenix pins python-dateutil < 3, while kubernetes (pulled in by chromadb,
+# unused here) asks for >= 3. pip warns about it; RedRAG is unaffected.
+arize-phoenix==20.16.0
+opentelemetry-sdk==1.45.2
+opentelemetry-exporter-otlp-proto-http==1.45.2
+
 # --- Interfaces -----------------------------------------------------------
 typer==0.29.1
 rich==15.0.0

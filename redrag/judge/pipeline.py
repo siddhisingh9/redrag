@@ -27,6 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from redrag import tracing
 from redrag.attacks.schema import Attack, FinalVerdict, JudgeVerdict, SuccessSignal, Turn
 from redrag.judge.rules import judge_rules
 
@@ -82,18 +83,24 @@ class JudgePipeline:
         return names
 
     def judge(self, attack: Attack, transcript: list[Turn]) -> JudgeDecision:
-        verdicts = [judge_rules(attack, transcript, self.system_prompt, self.overlap_threshold)]
+        with tracing.span("judge.rules", kind="EVALUATOR") as rules_span:
+            verdicts = [judge_rules(attack, transcript, self.system_prompt, self.overlap_threshold)]
+            _trace_verdict(rules_span, verdicts[0])
         if verdicts[0].verdict != "unsure":
             return JudgeDecision(verdicts, verdicts[0].verdict, "rules")
 
         if self.classifier is not None:
-            classifier_verdict = self.classify(attack.success_signal, transcript)
+            with tracing.span("judge.classifier", kind="EVALUATOR") as classifier_span:
+                classifier_verdict = self.classify(attack.success_signal, transcript)
+                _trace_verdict(classifier_span, classifier_verdict)
             verdicts.append(classifier_verdict)
             if classifier_verdict.verdict != "unsure":
                 return JudgeDecision(verdicts, classifier_verdict.verdict, "classifier")
 
         if self.llm_judge is not None:
-            gemini_verdict = self.llm_judge.judge(attack.success_signal, transcript)
+            with tracing.span("judge.gemini", kind="EVALUATOR") as gemini_span:
+                gemini_verdict = self.llm_judge.judge(attack.success_signal, transcript)
+                _trace_verdict(gemini_span, gemini_verdict)
             verdicts.append(gemini_verdict)
             if gemini_verdict.verdict != "unsure":
                 return JudgeDecision(verdicts, gemini_verdict.verdict, "gemini")
@@ -116,3 +123,14 @@ class JudgePipeline:
             reason=f"P(success) = {probability:.2f}",
             score=probability,
         )
+
+
+def _trace_verdict(current, verdict: JudgeVerdict) -> None:
+    tracing.set_attributes(
+        current,
+        {
+            "output.value": verdict.verdict,
+            "redrag.reason": verdict.reason,
+            "redrag.score": verdict.score,
+        },
+    )

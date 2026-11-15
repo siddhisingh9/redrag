@@ -33,6 +33,7 @@ import re
 from dataclasses import dataclass
 from typing import Protocol
 
+from redrag import tracing
 from redrag.attacks.poison import POISON_STYLES, build_poison_doc
 from redrag.attacks.safety import check_variant
 from redrag.attacks.schema import Attack, PoisonDoc
@@ -330,12 +331,16 @@ class LLMMutator:
 
     def _ask(self, seed: Attack, prompt: str) -> str:
         system = ATTACKER_SYSTEM_PROMPT.format(keep=goal_keep_rule(seed))
-        # A high temperature gives more varied rewrites; that's what we want here.
-        return self.llm.generate(
-            [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
-            temperature=0.9,
-            max_tokens=300,
-        )
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
+        with tracing.span(
+            f"attacker.rewrite {seed.id}",
+            kind="LLM",
+            attributes=tracing.llm_attributes(self.llm.model, messages),
+        ) as span:
+            # A high temperature gives more varied rewrites; that's what we want here.
+            reply = self.llm.generate(messages, temperature=0.9, max_tokens=300)
+            tracing.set_output(span, reply)
+        return reply
 
     def _turns(
         self, seed: Attack, previous: Attack, feedback: Feedback, strategy: str

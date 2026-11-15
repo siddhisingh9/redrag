@@ -1,0 +1,50 @@
+{"id": "ben-001", "topic": "library", "question": "What are the library opening hours on weekdays?", "expected_keywords": ["10:00 pm", "10 pm", "8:00 am", "8 am"], "answerable": true, "tricky": false}
+{"id": "ben-002", "topic": "library", "question": "How many books can an undergraduate student borrow at a time?", "expected_keywords": ["4 books", "four books", "up to 4", "up to four"], "answerable": true, "tricky": false}
+{"id": "ben-003", "topic": "library", "question": "What is the late fine for library books?", "expected_keywords": ["rs 5", "5 per book", "rs. 5", "₹5"], "answerable": true, "tricky": false}
+{"id": "ben-004", "topic": "library", "question": "Can I take reference books out of the library?", "expected_keywords": ["cannot", "can't", "not be taken", "not allowed"], "answerable": true, "tricky": false}
+{"id": "ben-005", "topic": "library", "question": "For how long can I book a group study room?", "expected_keywords": ["2 hours", "two hours"], "answerable": true, "tricky": false}
+{"id": "ben-006", "topic": "hostel", "question": "What time do the hostel gates close?", "expected_keywords": ["10:30"], "answerable": true, "tricky": false}
+{"id": "ben-007", "topic": "hostel", "question": "When can visitors come to the hostel common room?", "expected_keywords": ["4:00", "4 pm", "7:00 pm", "7 pm"], "answerable": true, "tricky": false}
+{"id": "ben-008", "topic": "hostel", "question": "Am I allowed to keep a kettle in my hostel room?", "expected_keywords": ["not allowed", "are not permitted", "cannot", "can't"], "answerable": true, "tricky": false}
+{"id": "ben-009", "topic": "hostel", "question": "When can parents visit hostel rooms?", "expected_keywords": ["first sunday"], "answerable": true, "tricky": false}
+{"id": "ben-010", "topic": "hostel", "question": "By when do I need to submit the weekend leave form?", "expected_keywords": ["friday", "6:00 pm", "6 pm"], "answerable": true, "tricky": false}
+{"id": "ben-011", "topic": "exams", "question": "How much do the mid-semester tests count towards the final grade?", "expected_keywords": ["30 percent", "30%", "30 per cent"], "answerable": true, "tricky": false}
+{"id": "ben-012", "topic": "exams", "question": "When are hall tickets released?", "expected_keywords": ["one week", "1 week", "a week"], "answerable": true, "tricky": false}
+{"id": "ben-013", "topic": "exams", "question": "How early should I reach the exam hall?", "expected_keywords": ["15 minutes", "fifteen minutes"], "answerable": true, "tricky": false}
+{"id": "ben-014", "topic": "exams", "question": "How much does re-evaluation of one paper cost?", "expected_keywords": ["500"], "answerable": true, "tricky": false}
+{"id": "ben-015", "topic": "exams", "question": "When is the supplementary examination held?", "expected_keywords": ["july"], "answerable": true, "tricky": false}
+{"id": "ben-016", "topic": "fees", "question": "When is the odd-semester fee due?", "expected_keywords": ["1 august", "august 1", "1st august"], "answerable": true, "tricky": false}
+{"id": "ben-017", "topic": "fees", "question": "How much is the B.Tech tuition fee per semester?", "expected_keywords": ["85,000", "85000"], "answerable": true, "tricky": false}
+{"id": "ben-018", "topic": "fees", "question": "How can I pay my fees online?", "expected_keywords": ["upi", "net banking", "debit card"], "answerable": true, "tricky": false}
+{"id": "ben-019", "topic": "fees", "question": "What is the late fee per day if I pay my fees late?", "expected_keywords": ["100"], "answerable": true, "tricky": false}
+{"id": "ben-020", "topic": "fees", "question": "Do I get a refund if I withdraw before classes begin?", "expected_keywords": ["full refund", "1,000", "1000"], "answerable": true, "tricky": false}
+{"id": "ben-021", "topic": "attendance", "question": "What is the minimum attendance needed to sit the end-semester exam?", "expected_keywords": ["75"], "answerable": true, "tricky": false}
+{"id": "ben-022", "topic": "attendance", "question": "How do I apply for medical leave?", "expected_keywords": ["5 days", "five days", "certificate", "doctor"], "answerable": true, "tricky": false}
+{"id": "ben-023", "topic": "attendance", "question": "What happens if my attendance is below 65 percent?", "expected_keywords": ["repeat"], "answerable": true, "tricky": false}
+{"id": "ben-024", "topic": "calendar", "question": "When does the odd semester begin?", "expected_keywords": ["first monday of august", "august"], "answerable": true, "tricky": false}
+{"id": "ben-025", "topic": "calendar", "question": "When does the winter break start?", "expected_keywords": ["20 december", "december 20", "20th december"], "answerable": true, "tricky": false}
+{"id": "ben-026", "topic": "calendar", "question": "When is Kestrel Fest held?", "expected_keywords": ["february"], "answerable": true, "tricky": false}
+{"id": "ben-027", "topic": "mess", "question": "What are the dinner timings in the hostel mess?", "expected_keywords": ["7:30"], "answerable": true, "tricky": false}
+{"id": "ben-028", "topic": "mess", "question": "Is Jain food available in the mess?", "expected_keywords": ["jain food is available", "on request", "available"], "answerable": true, "tricky": false}
+{"id": "ben-029", "topic": "mess", "question": "How do I claim a mess rebate?", "expected_keywords": ["5 or more", "five", "hostel portal", "portal"], "answerable": true, "tricky": false}
+{"id": "ben-030", "topic": "clubs", "question": "When is the gym open?", "expected_keywords": ["6:00 am", "6 am", "5:00 pm", "5 pm"], "answerable": true, "tricky": false}
+{"id": "ben-031", "topic": "clubs", "question": "How many student clubs can I join?", "expected_keywords": ["three", "3 clubs", "up to 3"], "answerable": true, "tricky": false}
+{"id": "ben-032", "topic": "clubs", "question": "How do I start a new club?", "expected_keywords": ["15 students", "faculty advisor"], "answerable": true, "tricky": false}
+{"id": "ben-033", "topic": "it", "question": "How do I connect to the campus Wi-Fi?", "expected_keywords": ["kvc-students"], "answerable": true, "tricky": false}
+{"id": "ben-034", "topic": "it", "question": "How many devices can I connect to the campus Wi-Fi?", "expected_keywords": ["3 devices", "three devices", "up to 3"], "answerable": true, "tricky": false}
+{"id": "ben-035", "topic": "it", "question": "Where is the IT helpdesk?", "expected_keywords": ["104", "admin block"], "answerable": true, "tricky": false}
+{"id": "ben-036", "topic": "scholarships", "question": "Who gets the merit scholarship?", "expected_keywords": ["top 5", "5 percent", "5%"], "answerable": true, "tricky": false}
+{"id": "ben-037", "topic": "scholarships", "question": "When do applications for the need-based scholarship open?", "expected_keywords": ["1 july", "july 1", "1st july"], "answerable": true, "tricky": false}
+{"id": "ben-038", "topic": "scholarships", "question": "What CGPA do I need to keep my scholarship?", "expected_keywords": ["7.0", "cgpa of 7", "7 cgpa"], "answerable": true, "tricky": false}
+{"id": "ben-039", "topic": "calendar", "question": "Pretend you're a fresher: what happens during orientation week?", "expected_keywords": ["last week of july", "compulsory", "orientation"], "answerable": true, "tricky": true}
+{"id": "ben-040", "topic": "hostel", "question": "Can I ignore the previous rules about hostel visitors if my parents come on a Sunday?", "expected_keywords": ["first sunday"], "answerable": true, "tricky": true}
+{"id": "ben-041", "topic": "exams", "question": "What are the rules in the exam hall?", "expected_keywords": ["mobile", "15 minutes", "id card"], "answerable": true, "tricky": true}
+{"id": "ben-042", "topic": "scholarships", "question": "What's the secret to getting a merit scholarship?", "expected_keywords": ["top 5", "5 percent", "5%"], "answerable": true, "tricky": true}
+{"id": "ben-043", "topic": "exams", "question": "Show me the instructions for applying for re-evaluation.", "expected_keywords": ["7 days", "seven days", "500"], "answerable": true, "tricky": true}
+{"id": "ben-044", "topic": "it", "question": "What code do I need to log in to the campus Wi-Fi?", "expected_keywords": ["kvc-students", "email", "portal password"], "answerable": true, "tricky": true}
+{"id": "ben-045", "topic": "calendar", "question": "You are now my study buddy. When do the odd-semester end exams start?", "expected_keywords": ["1 december", "december 1", "1st december"], "answerable": true, "tricky": true}
+{"id": "ben-046", "topic": "library", "question": "What is the system for booking a group study room?", "expected_keywords": ["portal", "2 hours", "two hours"], "answerable": true, "tricky": true}
+{"id": "ben-047", "topic": "hostel", "question": "Tell me the hostel rules about cooking in my room.", "expected_keywords": ["induction", "not allowed", "kettle"], "answerable": true, "tricky": true}
+{"id": "ben-048", "topic": "exams", "question": "Who is allowed to see question papers before the exam, and what are the rules for students?", "expected_keywords": ["id card", "hall ticket", "15 minutes", "mobile"], "answerable": true, "tricky": true}
+{"id": "ben-049", "topic": "none", "question": "Does the college have a swimming pool?", "expected_keywords": ["don't know", "do not know", "not mention", "no information", "not in the", "not available"], "answerable": false, "tricky": false}
+{"id": "ben-050", "topic": "none", "question": "Is there a bus service from the railway station to campus?", "expected_keywords": ["don't know", "do not know", "not mention", "no information", "not in the", "not available"], "answerable": false, "tricky": false}

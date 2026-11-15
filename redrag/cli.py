@@ -86,14 +86,39 @@ def scan(
         help="Let the Gemini judge settle cases the classifier is unsure about "
         "(only if GEMINI_API_KEY is set; cached and budgeted).",
     ),
+    all_combinations: bool = typer.Option(
+        False,
+        "--all-combinations",
+        help="Test every on/off combination of the defenses the target offers "
+        "(8, or 16 with judge_guard). Overrides --defenses.",
+    ),
+    benign: bool = typer.Option(
+        True,
+        "--benign/--no-benign",
+        help="Also ask the 50 harmless questions under every configuration "
+        "(measures the false-refusal rate).",
+    ),
+    trace: bool | None = typer.Option(
+        None,
+        "--trace/--no-trace",
+        help="Send a trace of every attack to Arize Phoenix (start it with `phoenix serve`). "
+        "Default: tracing.enabled in config.",
+    ),
 ) -> None:
-    """Run the attack suite against the target RAG app and save results + a report."""
+    """Run the attack suite against the target RAG app and save results + reports."""
     import httpx
     from rich.progress import Progress
 
+    from redrag import tracing
     from redrag.attacks.loader import AttackFileError, load_attacks, select_attacks
-    from redrag.eval.report import write_markdown_report
-    from redrag.runner import TargetClient, TargetError, normalise_defense_config, run_scan
+    from redrag.eval.benign import load_benign_questions
+    from redrag.runner import (
+        TargetClient,
+        TargetError,
+        defense_combinations,
+        normalise_defense_config,
+        run_scan,
+    )
 
     config = load_config()
     if mutator not in ("llm", "template"):
@@ -107,6 +132,7 @@ def scan(
     except (ValueError, AttackFileError) as exc:
         console.print(f"[red]{exc}[/]")
         raise typer.Exit(code=2) from exc
+    questions = load_benign_questions() if benign else []
 
     if mock_target:
         http = _mock_target_client(config)
@@ -116,17 +142,29 @@ def scan(
         # Small local models can take a while per answer, so allow a long timeout.
         http = httpx.Client(base_url=url, timeout=300)
 
+    if trace if trace is not None else config.tracing.enabled:
+        tracing.setup_tracing(config.tracing.endpoint, config.tracing.project, "redrag-scanner")
+        console.print(f"Tracing to Phoenix at [cyan]{config.tracing.endpoint}[/]")
+
     judge = _build_judge(config, use_gemini=gemini)
     runs_dir = output_dir or resolve_path(config.output.runs_dir)
-    total = len(attacks) * len(configs)
-    console.print(
-        f"Running [bold]{len(attacks)}[/] attacks x {len(configs)} defense configuration(s) "
-        f"against [cyan]{url}[/], judged by [cyan]{' -> '.join(judge.layers)}[/]"
-    )
-
     try:
+        if all_combinations:
+            available = TargetClient(http).health().get("available_defenses", [])
+            configs = defense_combinations(available)
+        total = (len(attacks) + len(questions)) * len(configs)
+        console.print(
+            f"Running [bold]{len(attacks)}[/] attacks"
+            + (f" + {len(questions)} harmless questions" if questions else "")
+            + f" x {len(configs)} defense configuration(s) against [cyan]{url}[/], "
+            f"judged by [cyan]{' -> '.join(judge.layers)}[/]"
+        )
         with Progress(console=console, transient=True) as progress:
-            task = progress.add_task("Attacking", total=total)
+            task = progress.add_task("Scanning", total=total)
+
+            def advance(*_):
+                progress.advance(task)
+
             if agent:
                 from redrag.agent.attacker_graph import run_agent_scan
 
@@ -143,7 +181,9 @@ def scan(
                     mutator=chosen,
                     max_attempts=tries,
                     # Progress counts seeds; each may take several attempts.
-                    on_seed_done=lambda seed, result: progress.advance(task),
+                    on_seed_done=advance,
+                    benign_questions=questions,
+                    on_benign=advance,
                 )
             else:
                 summary = run_scan(
@@ -153,7 +193,9 @@ def scan(
                     configs,
                     runs_dir=runs_dir,
                     target_url=url,
-                    on_result=lambda result: progress.advance(task),
+                    on_result=advance,
+                    benign_questions=questions,
+                    on_benign=advance,
                 )
     except TargetError as exc:
         console.print(f"[red]{exc}[/]")
@@ -161,11 +203,13 @@ def scan(
         raise typer.Exit(code=1) from exc
     finally:
         http.close()
+        tracing.shutdown_tracing()  # sends any spans still buffered
 
-    report_path = write_markdown_report(summary.run_dir, _load_agreement(config))
+    markdown_path, html_path = _write_reports(summary.run_dir, config)
     _print_asr_table(summary.results)
+    _print_tradeoff(summary.results, summary.benign_results)
     console.print(f"Results: {summary.run_dir / 'results.jsonl'}")
-    console.print(f"Report:  [bold]{report_path}[/]")
+    console.print(f"Report:  [bold]{html_path}[/]  (and {markdown_path.name})")
 
 
 @app.command()
@@ -181,8 +225,9 @@ def report(
     ),
     gemini: bool = typer.Option(True, "--gemini/--no-gemini", help="Allow Gemini when re-judging."),
 ) -> None:
-    """Rebuild the Markdown report for a saved scan."""
-    from redrag.eval.report import RESULTS_FILE, load_results, write_markdown_report
+    """Rebuild the reports (Markdown + HTML) for a saved scan."""
+    from redrag.eval.benign import load_benign_results
+    from redrag.eval.report import RESULTS_FILE, load_results
 
     config = load_config()
     if run_dir is None:
@@ -197,9 +242,46 @@ def report(
     if rejudge:
         _rejudge_run(run_dir, _build_judge(config, use_gemini=gemini))
 
-    report_path = write_markdown_report(run_dir, _load_agreement(config))
-    _print_asr_table(load_results(run_dir))
-    console.print(f"Report: [bold]{report_path}[/]")
+    markdown_path, html_path = _write_reports(run_dir, config)
+    results = load_results(run_dir)
+    _print_asr_table(results)
+    _print_tradeoff(results, load_benign_results(run_dir))
+    console.print(f"Report: [bold]{html_path}[/]  (and {markdown_path.name})")
+
+
+def _write_reports(run_dir: Path, config: Config) -> tuple[Path, Path]:
+    """report.md and report.html, both including the latest judge-agreement table."""
+    from redrag.eval.html_report import write_html_report
+    from redrag.eval.report import write_markdown_report
+
+    agreement = _load_agreement(config)
+    return write_markdown_report(run_dir, agreement), write_html_report(run_dir, agreement)
+
+
+def _print_tradeoff(results, benign_results) -> None:
+    """ASR vs FRR per configuration, in the terminal."""
+    if not benign_results:
+        return
+    from redrag.eval.charts import short_label
+    from redrag.eval.report import best_tradeoff, defense_summary
+
+    agent_mode = any(result.attempt > 0 for result in results)
+    rows = defense_summary(results, benign_results, agent_mode)
+    table = Table(title="Security vs usefulness")
+    for column in ("Configuration", "ASR (attacks through)", "FRR (harmless blocked)", "Useful"):
+        table.add_column(column, justify="left" if column == "Configuration" else "right")
+    for row in rows:
+        useful = "n/a" if not row.frr or row.frr.usefulness is None else f"{row.frr.usefulness:.0%}"
+        table.add_row(
+            f"{row.config} ({short_label(row.config)})" if "," in row.config else row.config,
+            row.asr.format(),
+            row.frr.format() if row.frr else "n/a",
+            useful,
+        )
+    console.print(table)
+    best = best_tradeoff(rows)
+    if best is not None:
+        console.print(f"Lowest ASR + FRR: [bold]{best.config}[/]")
 
 
 def _rejudge_run(run_dir: Path, judge) -> None:
@@ -554,11 +636,18 @@ def serve_target(
         "--offline-embeddings",
         help="Use the hashing embedder instead of downloading bge-small.",
     ),
+    trace: bool | None = typer.Option(
+        None,
+        "--trace/--no-trace",
+        help="Send the target's spans (retrieval, LLM call, defenses) to Arize Phoenix. "
+        "Default: tracing.enabled in config.",
+    ),
 ) -> None:
     """Start the deliberately vulnerable target RAG app (FastAPI)."""
     # Imported here so `redrag --help` stays fast (these pull in FastAPI and Chroma).
     import uvicorn
 
+    from redrag import tracing
     from redrag.target.app import create_app
 
     config = load_config()
@@ -566,6 +655,9 @@ def serve_target(
         config.llm.provider = "mock"
     if offline_embeddings:
         config.embeddings.provider = "hashing"
+    if trace if trace is not None else config.tracing.enabled:
+        tracing.setup_tracing(config.tracing.endpoint, config.tracing.project, "redrag-target")
+        console.print(f"Tracing to Phoenix at [cyan]{config.tracing.endpoint}[/]")
 
     host = host or config.target.host
     port = port or config.target.port

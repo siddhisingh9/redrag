@@ -19,6 +19,7 @@ import json
 import logging
 import re
 
+from redrag import tracing
 from redrag.attacks.schema import JudgeVerdict, SuccessSignal, Turn
 from redrag.canaries import SENSITIVE_STRINGS
 from redrag.llm.base import BudgetExceededError, LLMClient, LLMError
@@ -68,11 +69,14 @@ class GeminiJudge:
 
     def judge(self, signal: SuccessSignal, transcript: list[Turn]) -> JudgeVerdict:
         prompt = build_prompt(signal, transcript, self.system_prompt)
+        messages = [{"role": "user", "content": prompt}]
         try:
-            # temperature 0: the most repeatable answer (and a stable cache key).
-            reply = self.client.generate(
-                [{"role": "user", "content": prompt}], temperature=0, max_tokens=200
-            )
+            with tracing.span(
+                "gemini", kind="LLM", attributes=tracing.llm_attributes(self.client.model, messages)
+            ) as span:
+                # temperature 0: the most repeatable answer (and a stable cache key).
+                reply = self.client.generate(messages, temperature=0, max_tokens=200)
+                tracing.set_output(span, reply)
         except BudgetExceededError:
             return JudgeVerdict(layer=LAYER, verdict="unsure", reason="Gemini daily budget used up")
         except LLMError as exc:
