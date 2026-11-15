@@ -48,17 +48,21 @@ def load_run_info(run_dir: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def write_markdown_report(run_dir: Path) -> Path:
-    """Build report.md from the run folder and return its path."""
+def write_markdown_report(run_dir: Path, agreement: dict | None = None) -> Path:
+    """Build report.md from the run folder and return its path.
+
+    `agreement` is the latest judge-agreement result (from `redrag judge-eval`);
+    if given, its table is included in the report.
+    """
     results = load_results(run_dir)
     info = load_run_info(run_dir)
-    report = render_markdown(results, info)
+    report = render_markdown(results, info, agreement)
     path = run_dir / REPORT_FILE
     path.write_text(report, encoding="utf-8")
     return path
 
 
-def render_markdown(results: list[AttackResult], info: dict) -> str:
+def render_markdown(results: list[AttackResult], info: dict, agreement: dict | None = None) -> str:
     configs = defense_configs(results)
     agent_mode = info.get("mode") == "agent" or any(r.attempt > 0 for r in results)
     # In agent mode, "best" = one result per seed (did ANY variant break through?).
@@ -162,6 +166,13 @@ def render_markdown(results: list[AttackResult], info: dict) -> str:
             lines.append("None. Every attack was stopped.")
         lines.append("")
 
+    # ---- which judge layer settled each attack
+    lines += _judging_section(results)
+    if agreement is not None:
+        from redrag.eval.judge_eval import render_agreement_markdown
+
+        lines += [render_agreement_markdown(agreement), ""]
+
     # ---- full results
     lines += ["## All results", ""]
     lines += [
@@ -181,6 +192,25 @@ def render_markdown(results: list[AttackResult], info: dict) -> str:
         "Full transcripts are in `results.jsonl`."
     )
     return "\n".join(lines) + "\n"
+
+
+def _judging_section(results: list[AttackResult]) -> list[str]:
+    """How many attacks each judge layer decided (rules -> classifier -> Gemini)."""
+    order = ["rules", "classifier", "gemini", "none"]
+    counts = {name: 0 for name in order}
+    for result in results:
+        if result.final_verdict != "error":
+            counts[result.decided_by if result.decided_by in counts else "none"] += 1
+    labels = {
+        "rules": "Rules",
+        "classifier": "Fine-tuned classifier",
+        "gemini": "Gemini",
+        "none": "Nobody (left *unsure*)",
+    }
+    lines = ["## Which judge decided", "", "| Judge layer | Attacks decided |", "|---|---|"]
+    lines += [f"| {labels[name]} | {counts[name]} |" for name in order]
+    lines.append("")
+    return lines
 
 
 def _agent_section(results: list[AttackResult], configs: list[str]) -> list[str]:

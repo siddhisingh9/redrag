@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from typing import Protocol
 
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -75,21 +76,33 @@ class HealthResponse(BaseModel):
     documents: int
     chunks: int
     default_defenses: list[str]
+    available_defenses: list[str]
 
 
 # ---------------------------------------------------------------- the app
+
+
+class Guard(Protocol):
+    """What judge_guard needs: the fine-tuned classifier's goal-agnostic score."""
+
+    def score_any_goal(self, answers: list[str]) -> float: ...
 
 
 def create_app(
     config: Config | None = None,
     llm: LLMClient | None = None,
     pipeline: RAGPipeline | None = None,
+    guard: Guard | None = None,
 ) -> FastAPI:
     """Build the target app.
 
     Everything can be passed in, so tests can use the MockClient, the offline
     hashing embedder and a temporary Chroma folder. With no arguments, it uses
     the real setup from config.
+
+    `guard` is the fine-tuned judge used by the judge_guard defense. Without
+    one, judge_guard is unavailable (and "all" means the other three defenses).
+    `redrag serve-target` loads it automatically once a model has been trained.
 
     The knowledge base is rebuilt from the clean handbook on startup, so poisoned
     documents from a previous run never linger.
@@ -98,6 +111,7 @@ def create_app(
     llm = llm or build_local_client(config, "victim")
     pipeline = pipeline or build_pipeline(config)
     pipeline.reset()
+    available = list(defenses.AVAILABLE_DEFENSES) + (["judge_guard"] if guard else [])
 
     app = FastAPI(
         title="Campus Handbook Assistant (RedRAG target)",
@@ -115,7 +129,7 @@ def create_app(
 
     def active_defenses(header: str | None) -> frozenset[str]:
         try:
-            return defenses.parse_defenses(header, config.defenses)
+            return defenses.parse_defenses(header, config.defenses, available)
         except defenses.DefenseConfigError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -130,6 +144,7 @@ def create_app(
             documents=documents,
             chunks=chunks,
             default_defenses=defenses.describe(active_defenses(None)),
+            available_defenses=defenses.describe(available),
         )
 
     @app.post("/chat", response_model=ChatResponse)
@@ -175,6 +190,15 @@ def create_app(
                 logger.info("output_leak_filter blocked an answer: %s", result.reason)
                 answer = defenses.OUTPUT_REFUSAL
                 blocked_by = "output_leak_filter"
+
+        # Defense 4: the fine-tuned judge reads the answer; block if it looks like
+        # a successful attack. The goal is unknown here, so it checks all goal types.
+        if "judge_guard" in active and blocked_by is None and guard is not None:
+            probability = guard.score_any_goal([answer])
+            if probability >= config.judge.guard_threshold:
+                logger.info("judge_guard blocked an answer (P(success) = %.2f)", probability)
+                answer = defenses.OUTPUT_REFUSAL
+                blocked_by = "judge_guard"
 
         _remember(sessions, lock, request, answer)
         return ChatResponse(

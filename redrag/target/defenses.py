@@ -31,7 +31,8 @@ from redrag.canaries import SENSITIVE_STRINGS, find_canaries
 from redrag.config import DefensesConfig
 
 DEFENSE_NAMES = ("input_filter", "context_sanitiser", "output_leak_filter", "judge_guard")
-# Defenses that exist so far. judge_guard needs the fine-tuned judge from M4.
+# Always available. judge_guard is only available once a fine-tuned judge model
+# has been trained and copied into models/judge-deberta (see app.py).
 AVAILABLE_DEFENSES = ("input_filter", "context_sanitiser", "output_leak_filter")
 
 # Delimiters that mark retrieved text as data. The MockClient uses the same
@@ -66,16 +67,24 @@ class FilterResult:
 # --------------------------------------------------------------------------
 
 
-def parse_defenses(header: str | None, defaults: DefensesConfig) -> frozenset[str]:
+def parse_defenses(
+    header: str | None,
+    defaults: DefensesConfig,
+    available: Iterable[str] = AVAILABLE_DEFENSES,
+) -> frozenset[str]:
     """Work out which defenses are on for one request.
 
     The `X-RedRAG-Defenses` header lets a scan switch defenses per request
     without restarting the app. Accepted values:
         (header missing)                 -> use the flags from config
         "none" or ""                     -> no defenses
-        "all"                            -> every defense built so far
+        "all"                            -> every *available* defense
         "input_filter,output_leak_filter" -> exactly those
+
+    `available` is what this app instance can run. judge_guard is only in it
+    when a trained judge model was found.
     """
+    available = set(available)
     if header is None:
         names = {name for name, enabled in defaults.model_dump().items() if enabled}
     else:
@@ -83,7 +92,7 @@ def parse_defenses(header: str | None, defaults: DefensesConfig) -> frozenset[st
         if value in ("", "none"):
             return frozenset()
         if value == "all":
-            return frozenset(AVAILABLE_DEFENSES)
+            return frozenset(available)
         names = {part.strip() for part in value.split(",") if part.strip()}
 
     unknown = names - set(DEFENSE_NAMES)
@@ -92,9 +101,12 @@ def parse_defenses(header: str | None, defaults: DefensesConfig) -> frozenset[st
             f"Unknown defense(s): {sorted(unknown)}. Choose from {list(DEFENSE_NAMES)}, "
             "or use 'all' / 'none'."
         )
-    not_built = names - set(AVAILABLE_DEFENSES)
-    if not_built:
-        raise DefenseConfigError(f"Defense(s) {sorted(not_built)} are not available yet (M4).")
+    unavailable = names - available
+    if unavailable:
+        raise DefenseConfigError(
+            f"Defense(s) {sorted(unavailable)} not available: judge_guard needs a trained "
+            "judge model in models/judge-deberta (see notebooks/finetune_judge.ipynb)."
+        )
     return frozenset(names)
 
 

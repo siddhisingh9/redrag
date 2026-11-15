@@ -34,7 +34,7 @@ import httpx
 from redrag.attacks.schema import Attack, AttackResult, Turn
 from redrag.eval.report import RESULTS_FILE, RUN_INFO_FILE
 from redrag.judge.pipeline import JudgePipeline
-from redrag.target.defenses import AVAILABLE_DEFENSES
+from redrag.target.defenses import DEFENSE_NAMES
 
 
 class TargetError(RuntimeError):
@@ -88,13 +88,13 @@ def normalise_defense_config(value: str) -> str:
     if value == "all":
         return "all"
     names = {part.strip() for part in value.split(",") if part.strip()}
-    unknown = names - set(AVAILABLE_DEFENSES)
+    unknown = names - set(DEFENSE_NAMES)
     if unknown:
         raise ValueError(
             f"Unknown or unavailable defense(s): {sorted(unknown)}. "
-            f"Choose from {list(AVAILABLE_DEFENSES)}, or 'none' / 'all'."
+            f"Choose from {list(DEFENSE_NAMES)}, or 'none' / 'all'."
         )
-    return ",".join(name for name in AVAILABLE_DEFENSES if name in names)
+    return ",".join(name for name in DEFENSE_NAMES if name in names)
 
 
 def new_run_id() -> str:
@@ -276,6 +276,7 @@ class AttackExecutor:
             attempt=attempt,
             strategy=attack.strategy,
             notes=attack.notes,
+            success_signal=attack.success_signal,
             category=attack.category,
             owasp=attack.owasp,
             language=attack.language,
@@ -340,3 +341,38 @@ def run_scan(
         executor.reset()  # leave the target clean for whoever uses it next
 
     return ScanSummary(run_id=context.run_id, run_dir=context.run_dir, results=recorder.results)
+
+
+# --------------------------------------------------------------------------
+# Re-judging saved results
+# --------------------------------------------------------------------------
+
+
+def rejudge(results: list[AttackResult], judge: JudgePipeline) -> list[AttackResult]:
+    """Run a (newer) judge pipeline on saved transcripts, without contacting the target.
+
+    Useful after training the classifier: old scans get the improved verdicts
+    for free. Errors stay errors (there is nothing to judge).
+    """
+    from redrag.eval.labels import attack_from_result, seeds_by_id
+
+    seeds = seeds_by_id()
+    updated = []
+    for result in results:
+        if result.final_verdict == "error" or not result.transcript:
+            updated.append(result)
+            continue
+        attack = attack_from_result(result, seeds)
+        decision = judge.judge(attack, result.transcript)
+        updated.append(
+            result.model_copy(
+                update={
+                    "success_signal": attack.success_signal,
+                    "judge_verdicts": decision.verdicts,
+                    "final_verdict": decision.final_verdict,
+                    "decided_by": decision.decided_by,
+                    "model_names": {**result.model_names, "judge": "+".join(judge.layers)},
+                }
+            )
+        )
+    return updated

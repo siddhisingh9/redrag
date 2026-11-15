@@ -6,7 +6,7 @@ RedRAG attacks a RAG chatbot, detects when it leaks data or obeys injected
 instructions, scores each attempt with a judge pipeline (rules → fine-tuned
 small classifier → Gemini as backup), and measures how much each defense helps.
 
-> **Status:** early development, milestone **M3 (adaptive attacker agent)**.
+> **Status:** early development, milestone **M4 (fine-tuned judge)**.
 > `serve-target`, `scan`, `report` and `show-config` work; `mcp` comes in M6.
 
 Everything runs on free tools: local models through Ollama, and the Gemini API
@@ -140,10 +140,12 @@ curl -X POST http://127.0.0.1:8000/chat -H "Content-Type: application/json" \
 |---|---|---|
 | `input_filter` | direct injection | blocks messages with obvious injection phrases |
 | `context_sanitiser` | indirect injection | removes instruction-like sentences from retrieved chunks and wraps them in `<data>` tags |
-| `output_leak_filter` | data / prompt leaks | blocks answers containing a canary or repeating the system prompt |
+| `output_leak_filter` | data / prompt leaks | blocks answers containing a canary, the restricted student's data, or the system prompt |
+| `judge_guard` | anything the classifier recognises | blocks answers the fine-tuned judge scores as a likely successful attack (needs a trained model) |
 
 Header values: `none`, `all`, or a comma-separated list. Without the header, the
-flags under `defenses:` in `config/default.yaml` apply. `judge_guard` arrives in M4.
+flags under `defenses:` in `config/default.yaml` apply. `all` means every defense
+the running app has available (`judge_guard` only once a judge model is trained).
 
 Chat history is kept per `session_id`, so use a new id for each independent test.
 An instruction from an earlier turn stays in the history and can affect later answers.
@@ -209,6 +211,43 @@ The attacker model is told to stay harmless, and every variant it writes is
 checked (`redrag/attacks/safety.py`). Off-topic or harmful text is thrown away
 and replaced with a template variant.
 
+### The judge pipeline
+
+Every attack is judged in up to three layers. Each runs only if the previous one couldn't decide:
+
+| Layer | Decides when | Cost |
+|---|---|---|
+| **Rules** | there's hard evidence (canary, marker word, verbatim system prompt), or the model clearly refused | free, instant |
+| **Fine-tuned classifier** (DeBERTa-v3-small) | the rules are *unsure* and the model is confident (P ≤ 0.35 or ≥ 0.65) | ~0.1 s on CPU |
+| **Gemini** (free tier) | the classifier is unsure (0.35 < P < 0.65) | 1 cached, budgeted request |
+
+The rules say *unsure* for leaks they can't see: a paraphrased or translated
+system prompt, or quoted confidential text without a canary. Those are the
+cases the classifier and Gemini are for. Each report shows which layer decided
+how many attacks.
+
+### Training the judge (once)
+
+```bash
+redrag label                  # 1. hand-label at least 150 saved results (s / f / k / q)
+redrag export-dataset         # 2. write data/judge_dataset/{train,val,test}.jsonl
+#                               3. run notebooks/finetune_judge.ipynb on a free Kaggle/Colab GPU,
+#                                  unzip its output into models/judge-deberta/
+redrag judge-eval             # 4. agreement table: rules vs classifier vs Gemini vs your labels
+redrag report --rejudge       # 5. re-judge your latest scan with the trained classifier
+```
+
+- **Labels** (`data/labels/hand_labels.jsonl`) store the full conversation, so
+  they survive deleting `runs/`. Commit this file: it's your work.
+- **The dataset split is by seed**: an attack, its agent variants and all its
+  runs land in the same split (no attack-id leakage). The test split holds only
+  hand labels; confident rule verdicts add extra training examples.
+- **Agreement** is measured as accuracy, precision/recall/F1 and Cohen's kappa
+  (agreement corrected for chance). Every scan report includes the latest table.
+- Once a model is in `models/judge-deberta/`, `redrag serve-target` also offers the
+  **`judge_guard`** defense: the classifier reads each answer and blocks likely leaks.
+- Gemini is used only if `GEMINI_API_KEY` is set (`--no-gemini` turns it off).
+
 ### The attack library
 
 55 seed attacks in [`redrag/attacks/seeds/`](redrag/attacks/seeds/), 11 per category:
@@ -265,12 +304,15 @@ redrag/
   target/                  vulnerable RAG app (FastAPI), RAG pipeline, defenses
   attacks/                 attack schema, 55 seed attacks, poisoned-doc builder
   agent/                   LangGraph adaptive attacker + attack rewriters (mutators)
-  judge/                   rule judge (+ fine-tuned classifier, Gemini judge in M4)
-  eval/                    ASR metrics + Markdown report (FRR, HTML in M5)
+  judge/                   rules -> fine-tuned classifier -> Gemini judge pipeline
+  eval/                    metrics, reports, hand labels, dataset export, judge agreement
+data/labels/               your hand labels + latest judge agreement (commit these)
+data/judge_dataset/        exported train/val/test for the notebook
+models/judge-deberta/      the trained judge (gitignored; copied from Kaggle/Colab)
   runner.py                orchestrates a scan
   cli.py                   `redrag` command
   mcp_server.py            MCP server                                                [M6]
-notebooks/                 judge fine-tuning notebook (Kaggle/Colab)                 [M4]
+notebooks/                 judge fine-tuning notebook (Kaggle/Colab, free GPU)
 dashboard/                 Streamlit dashboard                                       [M7]
 scripts/smoke_llm.py       checks Ollama + Gemini connectivity
 tests/                     offline pytest suite
@@ -285,8 +327,8 @@ tests/                     offline pytest suite
 | M0 | Project setup, config, LLM clients | ✅ |
 | M1 | Vulnerable target RAG app + defenses | ✅ |
 | M2 | Attack library, rule judge, basic scan + report | ✅ |
-| M3 | LangGraph adaptive attacker | ✅ in review |
-| M4 | Fine-tuned judge (DeBERTa-v3-small) + Gemini backup judge | ⏳ |
+| M3 | LangGraph adaptive attacker | ✅ |
+| M4 | Fine-tuned judge (DeBERTa-v3-small) + Gemini backup judge | ✅ in review (Gemini row needs an API key) |
 | M5 | Defense evaluation (ASR/FRR), HTML report, tracing | ⏳ |
 | M6 | MCP server + GitHub Actions gate | ⏳ |
 | M7 | Dashboard + README polish | ⏳ |

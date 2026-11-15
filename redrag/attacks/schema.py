@@ -136,6 +136,9 @@ class AttackResult(_Strict):
     strategy: str | None = None
     # The attack's notes; for agent variants this includes why an LLM rewrite was rejected.
     notes: str = ""
+    # What counted as success, so a result can be re-judged or labelled on its own.
+    # (Missing in runs saved before M4; `redrag.eval.labels` looks it up from the seeds.)
+    success_signal: SuccessSignal | None = None
     category: Category
     owasp: str
     language: str

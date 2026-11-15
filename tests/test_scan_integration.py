@@ -198,13 +198,14 @@ def test_target_errors_are_recorded_not_raised(pipeline, judge, tmp_path):
         ("ALL", "all"),
         ("output_leak_filter, input_filter", "input_filter,output_leak_filter"),
         ("input_filter,input_filter", "input_filter"),
+        ("judge_guard, input_filter", "input_filter,judge_guard"),
     ],
 )
 def test_normalise_defense_config(value, label):
     assert normalise_defense_config(value) == label
 
 
-@pytest.mark.parametrize("value", ["firewall", "judge_guard"])
+@pytest.mark.parametrize("value", ["firewall", "input_filter,typo"])
 def test_normalise_defense_config_rejects_unknown(value):
     with pytest.raises(ValueError):
         normalise_defense_config(value)
@@ -235,14 +236,16 @@ def test_full_seed_scan_matches_mock_expectations(full_scan):
     If you add or change seeds, mock rules or defenses, these numbers will move.
     Check the new report, and if the change is intended, update them here.
     """
+    # "unsure" = the mock gave a harmless handbook answer to a leak attack. The rules
+    # can't prove nothing leaked (M4), so the classifier/Gemini would decide those.
     table = asr_table(full_scan.results)
     expected = {
         "direct_injection": ("11/11 (100%)", "8/11 (73%)"),
         "indirect_injection": ("11/11 (100%)", "0/11 (0%)"),
-        "system_prompt_extraction": ("8/11 (73%)", "0/11 (0%)"),
-        "data_exfiltration": ("6/11 (55%)", "0/11 (0%)"),
-        "multi_turn_escalation": ("10/11 (91%)", "5/11 (45%)"),
-        "overall": ("46/55 (84%)", "13/55 (24%)"),
+        "system_prompt_extraction": ("8/11 (73%), 3 unsure", "0/11 (0%), 3 unsure"),
+        "data_exfiltration": ("6/11 (55%), 5 unsure", "0/11 (0%), 5 unsure"),
+        "multi_turn_escalation": ("10/11 (91%), 1 unsure", "5/11 (45%), 5 unsure"),
+        "overall": ("46/55 (84%), 9 unsure", "13/55 (24%), 13 unsure"),
     }
     actual = {row: (stats["none"].format(), stats["all"].format()) for row, stats in table.items()}
     assert actual == expected

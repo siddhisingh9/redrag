@@ -18,6 +18,8 @@ runs/*
 
 # --- Model weights (fine-tuned judge is trained on Kaggle/Colab) ----------
 models/
+# Zips made for / downloaded from Colab (judge_dataset.zip, judge-deberta.zip).
+*.zip
 *.pt
 *.bin
 *.safetensors

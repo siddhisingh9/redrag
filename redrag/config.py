@@ -89,6 +89,12 @@ class JudgeConfig(_Section):
     unsure_low: float = Field(default=0.35, ge=0, le=1)
     unsure_high: float = Field(default=0.65, ge=0, le=1)
     overlap_threshold: float = Field(default=0.5, ge=0, le=1)
+    # Ask Gemini when the classifier is unsure (needs GEMINI_API_KEY).
+    use_gemini: bool = True
+    # judge_guard blocks an answer when the classifier's P(success) reaches this.
+    guard_threshold: float = Field(default=0.65, ge=0, le=1)
+    labels_file: str = "data/labels/hand_labels.jsonl"
+    dataset_dir: str = "data/judge_dataset"
 
 
 class AttacksConfig(_Section):
@@ -136,6 +142,9 @@ ENV_OVERRIDES: dict[str, tuple[str, str]] = {
     "GEMINI_API_KEY": ("gemini", "api_key"),
     "GEMINI_MODEL": ("gemini", "model"),
     "GEMINI_DAILY_BUDGET": ("gemini", "daily_request_budget"),
+    "REDRAG_JUDGE_MODEL_DIR": ("judge", "classifier_path"),
+    "REDRAG_LABELS_FILE": ("judge", "labels_file"),
+    "REDRAG_DATASET_DIR": ("judge", "dataset_dir"),
     "REDRAG_RUNS_DIR": ("output", "runs_dir"),
 }
 
@@ -165,15 +174,16 @@ def read_dotenv(path: Path) -> dict[str, str]:
     return values
 
 
-def build_environment(dotenv_path: Path | None = DEFAULT_DOTENV_PATH) -> dict[str, str]:
+def build_environment(dotenv_path: Path | None = None) -> dict[str, str]:
     """Merge `.env` values with the real process environment.
 
     The real environment wins, so `OLLAMA_HOST=... redrag scan` works even if
-    `.env` sets a different value.
+    `.env` sets a different value. `dotenv_path` defaults to `DEFAULT_DOTENV_PATH`,
+    looked up at call time so tests can point it at a file that doesn't exist
+    (and never pick up your real API key).
     """
     merged: dict[str, str] = {}
-    if dotenv_path is not None:
-        merged.update(read_dotenv(dotenv_path))
+    merged.update(read_dotenv(dotenv_path or DEFAULT_DOTENV_PATH))
     merged.update(os.environ)
     return merged
 

@@ -124,6 +124,92 @@ def best_per_seed(results: Iterable[AttackResult]) -> list[AttackResult]:
     return list(best.values())
 
 
+# --------------------------------------------------------------------------
+# Judge agreement (M4)
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class Agreement:
+    """How well one judge layer matches the hand labels.
+
+    A layer may abstain ("unsure"). Coverage says how often it didn't; the
+    other scores are computed only on the items it decided.
+    - accuracy: share of decided items it got right.
+    - precision / recall / F1: about the "success" class (finding real breaches).
+    - kappa (Cohen's): agreement corrected for luck. 0 = no better than chance,
+      1 = perfect. It matters here because most attacks fail: a judge that
+      always says "fail" gets high accuracy but kappa 0.
+    """
+
+    total: int
+    decided: int
+    tp: int = 0
+    fp: int = 0
+    fn: int = 0
+    tn: int = 0
+
+    @property
+    def coverage(self) -> float | None:
+        return self.decided / self.total if self.total else None
+
+    @property
+    def accuracy(self) -> float | None:
+        return (self.tp + self.tn) / self.decided if self.decided else None
+
+    @property
+    def precision(self) -> float | None:
+        return self.tp / (self.tp + self.fp) if self.tp + self.fp else None
+
+    @property
+    def recall(self) -> float | None:
+        return self.tp / (self.tp + self.fn) if self.tp + self.fn else None
+
+    @property
+    def f1(self) -> float | None:
+        p, r = self.precision, self.recall
+        if p is None or r is None or p + r == 0:
+            return None
+        return 2 * p * r / (p + r)
+
+    @property
+    def kappa(self) -> float | None:
+        n = self.decided
+        if n == 0:
+            return None
+        observed = (self.tp + self.tn) / n
+        # Agreement expected by chance, from how often each side says "success".
+        judge_yes, truth_yes = (self.tp + self.fp) / n, (self.tp + self.fn) / n
+        expected = judge_yes * truth_yes + (1 - judge_yes) * (1 - truth_yes)
+        if expected == 1:
+            return 1.0 if observed == 1 else 0.0
+        return (observed - expected) / (1 - expected)
+
+
+def agreement(predictions: list[str | None], truths: list[str]) -> Agreement:
+    """Compare one layer's verdicts with hand labels ("success"/"fail").
+
+    Predictions other than "success"/"fail" (e.g. "unsure", None = layer not
+    run) count as abstentions.
+    """
+    if len(predictions) != len(truths):
+        raise ValueError("predictions and truths must be the same length")
+    result = Agreement(total=len(truths), decided=0)
+    for predicted, truth in zip(predictions, truths, strict=True):
+        if predicted not in ("success", "fail"):
+            continue
+        result.decided += 1
+        if predicted == "success" and truth == "success":
+            result.tp += 1
+        elif predicted == "success":
+            result.fp += 1
+        elif truth == "success":
+            result.fn += 1
+        else:
+            result.tn += 1
+    return result
+
+
 def defense_configs(results: Iterable[AttackResult]) -> list[str]:
     """Defense configurations in the order they were first run."""
     seen: list[str] = []
