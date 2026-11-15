@@ -29,6 +29,11 @@ extend-exclude = ["notebooks"]
 # UP: modern Python syntax, SIM: simpler equivalent code.
 select = ["E", "F", "I", "B", "UP", "SIM"]
 
+[tool.ruff.lint.flake8-bugbear]
+# Typer declares CLI options as `param = typer.Option(...)` defaults. That's
+# its intended usage, not the mutable-default bug B008 looks for.
+extend-immutable-calls = ["typer.Option", "typer.Argument"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

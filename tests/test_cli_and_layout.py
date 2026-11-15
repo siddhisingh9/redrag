@@ -38,9 +38,67 @@ def test_python_dash_m_entry_point_works():
 
 
 def test_unbuilt_command_exits_with_milestone_hint():
-    result = runner.invoke(app, ["scan"])
+    result = runner.invoke(app, ["mcp"])
     assert result.exit_code == 1
-    assert "M2" in result.output
+    assert "M6" in result.output
+
+
+def test_scan_mock_target_then_report(tmp_path):
+    """The M2 acceptance check in miniature: `redrag scan` writes results and a report."""
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "--mock-target",
+            "--max-attacks",
+            "5",
+            "--defenses",
+            "none",
+            "--defenses",
+            "all",
+            "--output-dir",
+            str(tmp_path),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Attack success rate" in result.output
+
+    run_dirs = list(tmp_path.iterdir())
+    assert len(run_dirs) == 1
+    assert (run_dirs[0] / "results.jsonl").exists()
+    assert (run_dirs[0] / "report.md").exists()
+
+    (run_dirs[0] / "report.md").unlink()
+    again = runner.invoke(app, ["report", str(run_dirs[0])])
+    assert again.exit_code == 0, again.output
+    assert (run_dirs[0] / "report.md").exists()
+
+
+def test_scan_rejects_bad_defense_and_category():
+    assert runner.invoke(app, ["scan", "--mock-target", "-d", "firewall"]).exit_code == 2
+    assert runner.invoke(app, ["scan", "--mock-target", "--categories", "nope"]).exit_code == 2
+
+
+def test_scan_explains_when_target_is_down(tmp_path):
+    # Port 9 on localhost has nothing listening, so the connection is refused at once.
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "--target-url",
+            "http://127.0.0.1:9",
+            "--max-attacks",
+            "1",
+            "--output-dir",
+            str(tmp_path),
+        ],
+    )
+    assert result.exit_code == 1
+    assert "redrag serve-target" in result.output
+
+
+def test_report_on_missing_run_fails(tmp_path):
+    assert runner.invoke(app, ["report", str(tmp_path / "nope")]).exit_code == 1
 
 
 def test_show_config_hides_api_key(monkeypatch):
