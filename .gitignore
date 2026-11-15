@@ -1,0 +1,40 @@
+# --- Private / local-only files -------------------------------------------
+# The build spec is kept local on purpose (not published to GitHub).
+spec.md
+
+# Secrets: API keys live only in .env (see .env.example for the variable list).
+.env
+.env.*
+!.env.example
+
+# --- Generated data -------------------------------------------------------
+# Vector DB built from the handbook docs; rebuilt on demand.
+data/chroma/
+# Scan outputs (results.jsonl, reports). Keep the folder, ignore its contents.
+runs/*
+!runs/.gitkeep
+# On-disk cache of Gemini responses + daily budget counter.
+.cache/
+
+# --- Model weights (fine-tuned judge is trained on Kaggle/Colab) ----------
+models/
+*.pt
+*.bin
+*.safetensors
+*.ckpt
+
+# --- Python ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# --- Editors / OS ---------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

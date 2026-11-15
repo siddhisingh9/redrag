@@ -1,0 +1,17 @@
+# RedRAG red-team CI gate. PLACEHOLDER, built in M6.
+#
+# In M6 this workflow will: on every pull request, install deps, run ruff and
+# pytest, start the target app with the MockClient, run a small fixed scan, and
+# fail if ASR with all defenses on rises above config/ci_baseline.json.
+#
+# Until then it only runs when triggered by hand, so it never blocks a PR.
+name: redteam
+
+on:
+  workflow_dispatch:
+
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "RedRAG CI gate is built in milestone M6."

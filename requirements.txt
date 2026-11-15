@@ -1,0 +1,46 @@
+# RedRAG dependencies (all free / open source). Versions are pinned.
+# Install with:  pip install -r requirements.txt
+#
+# Note: sentence-transformers pulls in PyTorch (a large download). Embeddings and
+# the judge classifier run on CPU, so the default CPU build of torch is fine.
+
+# --- Core / config --------------------------------------------------------
+pydantic==2.14.3
+pyyaml==6.0.3
+httpx==0.28.1
+
+# --- Target app + scanner API ---------------------------------------------
+fastapi==0.162.5
+uvicorn==0.54.0
+
+# --- LLMs -----------------------------------------------------------------
+# Ollama is called over plain HTTP with httpx (no extra package needed).
+google-genai==2.33.0
+
+# --- RAG ------------------------------------------------------------------
+sentence-transformers==6.3.0
+chromadb==1.5.9
+
+# --- Attacker agent -------------------------------------------------------
+langgraph==1.2.22
+
+# --- Judge model (inference locally; training happens in the notebook) -----
+transformers==5.20.2
+datasets==5.2.0
+peft==0.21.3
+
+# --- Reports / dashboard --------------------------------------------------
+matplotlib==3.10.9
+streamlit==1.65.0
+
+# --- Interfaces -----------------------------------------------------------
+typer==0.29.1
+rich==15.0.0
+mcp==2.3.0
+
+# --- Dev tools ------------------------------------------------------------
+pytest==9.1.1  # 9.2.0 crashes at startup (NodeId._str_cache bug)
+ruff==0.17.5
+
+# Baseline comparison tools (garak, promptfoo) are NOT installed here: they are
+# only used for a side-by-side comparison and are heavy. See README.

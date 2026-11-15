@@ -1,0 +1,34 @@
+# Project metadata + tool configuration.
+# Dependencies are pinned in requirements.txt (install that first); this file
+# lets `pip install -e .` register the `redrag` command, and configures ruff + pytest.
+
+[project]
+name = "redrag"
+version = "0.0.1"
+description = "Automated red-teaming agent for RAG applications."
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.scripts]
+redrag = "redrag.cli:app"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["redrag*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["notebooks"]
+
+[tool.ruff.lint]
+# E/F: pycodestyle + pyflakes basics, I: import sorting, B: common bug patterns,
+# UP: modern Python syntax, SIM: simpler equivalent code.
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
