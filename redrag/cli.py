@@ -65,6 +65,21 @@ def scan(
     output_dir: Path | None = typer.Option(
         None, help="Folder for run results. Default: output.runs_dir in config."
     ),
+    agent: bool = typer.Option(
+        False,
+        "--agent",
+        help="Use the adaptive attacker: seeds that fail are rewritten and retried.",
+    ),
+    mutator: str = typer.Option(
+        "llm",
+        help="How the agent rewrites attacks: 'llm' (Ollama attacker model) or 'template' "
+        "(fixed templates, offline). --mock-target always uses 'template'.",
+    ),
+    max_attempts: int | None = typer.Option(
+        None,
+        min=1,
+        help="Agent tries per seed, original included. Default: attacks.max_attempts in config.",
+    ),
 ) -> None:
     """Run the attack suite against the target RAG app and save results + a report."""
     import httpx
@@ -77,6 +92,9 @@ def scan(
     from redrag.target.rag import SYSTEM_PROMPT
 
     config = load_config()
+    if mutator not in ("llm", "template"):
+        console.print("[red]--mutator must be 'llm' or 'template'[/]")
+        raise typer.Exit(code=2)
 
     try:
         configs = [normalise_defense_config(value) for value in defenses]
@@ -105,15 +123,34 @@ def scan(
     try:
         with Progress(console=console, transient=True) as progress:
             task = progress.add_task("Attacking", total=total)
-            summary = run_scan(
-                attacks,
-                TargetClient(http),
-                judge,
-                configs,
-                runs_dir=runs_dir,
-                target_url=url,
-                on_result=lambda result: progress.advance(task),
-            )
+            if agent:
+                from redrag.agent.attacker_graph import run_agent_scan
+
+                tries = max_attempts or config.attacks.max_attempts
+                chosen = _build_mutator("template" if mock_target else mutator, config)
+                console.print(f"Agent mode: mutator [cyan]{chosen.name}[/], {tries} tries per seed")
+                summary = run_agent_scan(
+                    attacks,
+                    TargetClient(http),
+                    judge,
+                    configs,
+                    runs_dir=runs_dir,
+                    target_url=url,
+                    mutator=chosen,
+                    max_attempts=tries,
+                    # Progress counts seeds; each may take several attempts.
+                    on_seed_done=lambda seed, result: progress.advance(task),
+                )
+            else:
+                summary = run_scan(
+                    attacks,
+                    TargetClient(http),
+                    judge,
+                    configs,
+                    runs_dir=runs_dir,
+                    target_url=url,
+                    on_result=lambda result: progress.advance(task),
+                )
     except TargetError as exc:
         console.print(f"[red]{exc}[/]")
         console.print("Is the target running? Start it with: [bold]redrag serve-target[/]")
@@ -169,6 +206,16 @@ def _mock_target_client(config: Config):
     return TestClient(app_)
 
 
+def _build_mutator(kind: str, config: Config):
+    """The agent's attack rewriter: the attacker LLM (Ollama) or offline templates."""
+    from redrag.agent.mutators import LLMMutator, TemplateMutator
+    from redrag.llm import build_local_client
+
+    if kind == "template" or config.llm.provider == "mock":
+        return TemplateMutator()
+    return LLMMutator(build_local_client(config, "attacker"))
+
+
 def _latest_run_dir(runs_dir: Path) -> Path | None:
     """Run ids are timestamps, so the alphabetically last folder is the newest."""
     if not runs_dir.exists():
@@ -178,19 +225,35 @@ def _latest_run_dir(runs_dir: Path) -> Path | None:
 
 
 def _print_asr_table(results) -> None:
-    """Show the per-category ASR for each defense configuration in the terminal."""
-    from redrag.eval.metrics import asr_table, defense_configs
+    """Show the per-category ASR for each defense configuration in the terminal.
+
+    For agent runs, each configuration gets two columns: the seeds as written,
+    and "+ agent" (a seed counts as broken if any variant got through).
+    """
+    from redrag.eval.metrics import asr_table, best_per_seed, defense_configs, original_attempts
     from redrag.eval.report import CATEGORY_NAMES
 
     configs = defense_configs(results)
+    agent_mode = any(result.attempt > 0 for result in results)
+    columns = []  # (header, table)
+    if agent_mode:
+        original, best = asr_table(original_attempts(results)), asr_table(best_per_seed(results))
+        for config in configs:
+            columns += [(config, original, config), (f"{config} + agent", best, config)]
+    else:
+        plain = asr_table(results)
+        columns = [(config, plain, config) for config in configs]
+
     table = Table(title="Attack success rate (lower is better for the defender)")
     table.add_column("Category")
-    for config in configs:
-        table.add_column(config, justify="right")
-    for row, stats in asr_table(results).items():
+    for header, _, _ in columns:
+        table.add_column(header, justify="right")
+    rows = columns[0][1].keys() if columns else []
+    for row in rows:
         name = CATEGORY_NAMES.get(row, row).strip("*")
         style = "bold" if row == "overall" else None
-        table.add_row(name, *(stats[config].format() for config in configs), style=style)
+        cells = [source[row][config].format() for _, source, config in columns]
+        table.add_row(name, *cells, style=style)
     console.print(table)
 
 

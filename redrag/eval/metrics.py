@@ -97,6 +97,33 @@ def asr_table(results: list[AttackResult]) -> dict[str, dict[str, ASRStat]]:
     return table
 
 
+def original_attempts(results: Iterable[AttackResult]) -> list[AttackResult]:
+    """Only the unmodified seeds (attempt 0): what a plain scan would have measured."""
+    return [result for result in results if result.attempt == 0]
+
+
+# Which result best represents a seed: a success beats unsure beats fail beats error.
+_VERDICT_RANK = {"success": 3, "unsure": 2, "fail": 1, "error": 0}
+
+
+def best_per_seed(results: Iterable[AttackResult]) -> list[AttackResult]:
+    """One result per (defense config, seed): the best outcome across all its attempts.
+
+    This is the "after the agent" view: a seed counts as broken if *any* of its
+    variants broke through. Order follows the first appearance of each seed.
+    """
+    best: dict[tuple[str, str], AttackResult] = {}
+    for result in results:
+        key = (result.defense_config, result.root_id)
+        current = best.get(key)
+        if (
+            current is None
+            or _VERDICT_RANK[result.final_verdict] > _VERDICT_RANK[current.final_verdict]
+        ):
+            best[key] = result
+    return list(best.values())
+
+
 def defense_configs(results: Iterable[AttackResult]) -> list[str]:
     """Defense configurations in the order they were first run."""
     seen: list[str] = []

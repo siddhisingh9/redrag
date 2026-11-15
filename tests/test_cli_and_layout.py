@@ -77,6 +77,33 @@ def test_scan_mock_target_then_report(tmp_path):
 def test_scan_rejects_bad_defense_and_category():
     assert runner.invoke(app, ["scan", "--mock-target", "-d", "firewall"]).exit_code == 2
     assert runner.invoke(app, ["scan", "--mock-target", "--categories", "nope"]).exit_code == 2
+    assert runner.invoke(app, ["scan", "--mock-target", "--mutator", "magic"]).exit_code == 2
+
+
+def test_agent_scan_on_mock_target(tmp_path):
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "--mock-target",
+            "--agent",
+            "--categories",
+            "direct_injection",
+            "--max-attacks",
+            "5",
+            "-d",
+            "all",
+            "--max-attempts",
+            "3",
+            "--output-dir",
+            str(tmp_path),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "all + agent" in result.output
+    assert "mutator template" in result.output  # mock target always uses templates
+    report = next(tmp_path.iterdir()) / "report.md"
+    assert "## Adaptive attacker" in report.read_text(encoding="utf-8")
 
 
 def test_scan_explains_when_target_is_down(tmp_path):

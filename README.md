@@ -6,7 +6,7 @@ RedRAG attacks a RAG chatbot, detects when it leaks data or obeys injected
 instructions, scores each attempt with a judge pipeline (rules → fine-tuned
 small classifier → Gemini as backup), and measures how much each defense helps.
 
-> **Status:** early development, milestone **M2 (attack library + basic scan)**.
+> **Status:** early development, milestone **M3 (adaptive attacker agent)**.
 > `serve-target`, `scan`, `report` and `show-config` work; `mcp` comes in M6.
 
 Everything runs on free tools: local models through Ollama, and the Gemini API
@@ -172,6 +172,43 @@ Each scan creates `runs/<timestamp>/` with:
 
 For a real model, a full scan (55 attacks × 2 configurations) takes several minutes.
 
+### The adaptive attacker (`--agent`)
+
+A plain scan sends each seed once. With `--agent`, a seed that fails is
+**rewritten and retried**, up to `--max-attempts` tries (default 5, original
+included). The agent is a LangGraph loop:
+
+```
+pick_seed → craft_variant → send → observe → judge → decide ─┐
+    ▲              ▲                                          │
+    │              └──────── failed, tries left ──────────────┤
+    └──────────── succeeded or out of tries ─────────────────┘
+```
+
+It picks a rewriting strategy based on **why** the last try failed:
+
+| What happened | Next strategy |
+|---|---|
+| Blocked by `input_filter` | reword without trigger phrases, or hide the request in a normal question |
+| Leak caught by `output_leak_filter` | ask for the secret with spaces between the characters |
+| Poisoned doc never retrieved | rewrite the doc to match the question more closely |
+| Otherwise | rotate: role-play, authority claim, split across turns, restyle the hidden instruction |
+
+```bash
+redrag scan --agent                         # rewrites with the local Ollama model (llama3.2:3b)
+redrag scan --agent --mutator template      # rewrites with fixed templates (no model needed)
+redrag scan --agent -d all --max-attempts 4
+```
+
+Every variant is saved with its `parent_id` and `seed_id`, so the report can show
+how a successful attack evolved, e.g. `dir-001 → dir-001.v1 (rephrase:llm)`. Each
+configuration gets two columns in the report: **original** (seeds as written) and
+**+ agent** (a seed counts as broken if any variant got through).
+
+The attacker model is told to stay harmless, and every variant it writes is
+checked (`redrag/attacks/safety.py`). Off-topic or harmful text is thrown away
+and replaced with a template variant.
+
 ### The attack library
 
 55 seed attacks in [`redrag/attacks/seeds/`](redrag/attacks/seeds/), 11 per category:
@@ -227,7 +264,7 @@ redrag/
   llm/                     LLM clients: Ollama, Gemini (cache + budget + backoff), Mock
   target/                  vulnerable RAG app (FastAPI), RAG pipeline, defenses
   attacks/                 attack schema, 55 seed attacks, poisoned-doc builder
-  agent/                   LangGraph adaptive attacker                               [M3]
+  agent/                   LangGraph adaptive attacker + attack rewriters (mutators)
   judge/                   rule judge (+ fine-tuned classifier, Gemini judge in M4)
   eval/                    ASR metrics + Markdown report (FRR, HTML in M5)
   runner.py                orchestrates a scan
@@ -247,8 +284,8 @@ tests/                     offline pytest suite
 |---|---|---|
 | M0 | Project setup, config, LLM clients | ✅ |
 | M1 | Vulnerable target RAG app + defenses | ✅ |
-| M2 | Attack library, rule judge, basic scan + report | ✅ in review |
-| M3 | LangGraph adaptive attacker | ⏳ |
+| M2 | Attack library, rule judge, basic scan + report | ✅ |
+| M3 | LangGraph adaptive attacker | ✅ in review |
 | M4 | Fine-tuned judge (DeBERTa-v3-small) + Gemini backup judge | ⏳ |
 | M5 | Defense evaluation (ASR/FRR), HTML report, tracing | ⏳ |
 | M6 | MCP server + GitHub Actions gate | ⏳ |

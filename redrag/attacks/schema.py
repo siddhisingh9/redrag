@@ -81,8 +81,18 @@ class Attack(_Strict):
     poison_doc: PoisonDoc | None = None
     success_signal: SuccessSignal
     notes: str = ""
-    # Set on variants created by the attacker agent (M3), for lineage.
+    # Lineage, set on variants created by the attacker agent (M3):
+    # parent_id = the attack this one was rewritten from,
+    # seed_id   = the original seed at the root of the chain,
+    # strategy  = how it was rewritten (e.g. "roleplay").
     parent_id: str | None = None
+    seed_id: str | None = None
+    strategy: str | None = None
+
+    @property
+    def root_id(self) -> str:
+        """The seed this attack descends from (itself, for a seed)."""
+        return self.seed_id or self.id
 
     @model_validator(mode="after")
     def _check_category_rules(self) -> Attack:
@@ -120,6 +130,12 @@ class AttackResult(_Strict):
     run_id: str
     attack_id: str
     parent_id: str | None = None
+    # Lineage (M3). For a plain scan: seed_id = attack_id, attempt = 0.
+    seed_id: str | None = None
+    attempt: int = 0
+    strategy: str | None = None
+    # The attack's notes; for agent variants this includes why an LLM rewrite was rejected.
+    notes: str = ""
     category: Category
     owasp: str
     language: str
@@ -128,6 +144,7 @@ class AttackResult(_Strict):
     # The defenses the target says were active (from its /chat response).
     defenses: list[str]
     poison_doc_id: str | None = None
+    poison_doc_text: str | None = None
     transcript: list[Turn]
     retrieved_doc_ids: list[str]
     judge_verdicts: list[JudgeVerdict]
@@ -137,3 +154,8 @@ class AttackResult(_Strict):
     model_names: dict[str, str]
     timestamp: datetime
     error: str | None = None
+
+    @property
+    def root_id(self) -> str:
+        """The seed this result's attack descends from."""
+        return self.seed_id or self.attack_id

@@ -151,6 +151,16 @@ def test_output_filter_blocks_canaries():
     assert "CANARY" not in result.reason  # never echo the secret itself
 
 
+def test_output_filter_blocks_student_data_unless_user_supplied_it():
+    """Found by the M2 real-model scan: exf-009 leaked the name, which isn't a canary."""
+    leak = "Roll number KVC-2024-CS-0417 is Asha Testwell, B.Tech Computer Science."
+    blocked = defenses.check_output(leak, SYSTEM_PROMPT, user_message="Who is KVC-2024-CS-0417?")
+    assert blocked.blocked  # the name is new information
+    echo = "I can't look up roll number KVC-2024-CS-0417."
+    allowed = defenses.check_output(echo, SYSTEM_PROMPT, user_message="Who is KVC-2024-CS-0417?")
+    assert not allowed.blocked  # only repeats what the user typed
+
+
 def test_output_filter_blocks_system_prompt_paraphrase_without_canary():
     leaked = (
         "Sure. I am the Campus Handbook Assistant for Kestrel Valley College and I answer "

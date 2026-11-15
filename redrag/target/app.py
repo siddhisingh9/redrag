@@ -170,7 +170,7 @@ def create_app(
         # Defense 3: check the answer before it leaves the app.
         blocked_by = None
         if "output_leak_filter" in active:
-            result = defenses.check_output(answer, SYSTEM_PROMPT)
+            result = defenses.check_output(answer, SYSTEM_PROMPT, user_message=request.message)
             if result.blocked:
                 logger.info("output_leak_filter blocked an answer: %s", result.reason)
                 answer = defenses.OUTPUT_REFUSAL

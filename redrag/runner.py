@@ -10,6 +10,10 @@ For each defense configuration (e.g. "none", then "all"), and each attack:
 Results are written as they come in, so a scan stopped halfway still leaves
 usable data behind.
 
+The building blocks (`start_run`, `AttackExecutor`, `RunRecorder`) are shared
+with the adaptive attacker agent (redrag/agent/attacker_graph.py), which runs
+attacks one at a time and decides what to try next.
+
 The target is reached through any `httpx.Client`. For a real server that's
 `httpx.Client(base_url=...)`. In tests and `--mock-target` mode it's FastAPI's
 `TestClient`, which is also an httpx.Client but calls the app in-process.
@@ -23,6 +27,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import IO, Any
 
 import httpx
 
@@ -97,6 +102,204 @@ def new_run_id() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S")
 
 
+# --------------------------------------------------------------------------
+# Building blocks
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class RunContext:
+    run_id: str
+    run_dir: Path
+    target_model: str
+
+
+def start_run(
+    target: TargetClient,
+    judge: JudgePipeline,
+    defense_configs: list[str],
+    attacks: list[Attack],
+    runs_dir: Path,
+    target_url: str,
+    run_id: str | None = None,
+    extra_info: dict[str, Any] | None = None,
+) -> RunContext:
+    """Check the target is up, create the run folder and write run.json."""
+    run_id = run_id or new_run_id()
+    run_dir = runs_dir / run_id
+    health = target.health()  # fails fast if the target isn't running
+    run_dir.mkdir(parents=True, exist_ok=False)
+    target_model = health.get("model", "unknown")
+
+    info = {
+        "run_id": run_id,
+        "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "mode": "scan",
+        "target_url": target_url,
+        "target_model": target_model,
+        "defense_configs": defense_configs,
+        "attack_count": len(attacks),
+        "attack_ids": [attack.id for attack in attacks],
+        "judge_layers": judge.layers,
+        **(extra_info or {}),
+    }
+    (run_dir / RUN_INFO_FILE).write_text(json.dumps(info, indent=2), encoding="utf-8")
+    return RunContext(run_id=run_id, run_dir=run_dir, target_model=target_model)
+
+
+class RunRecorder:
+    """Appends each result to results.jsonl as soon as it exists, and keeps a copy."""
+
+    def __init__(
+        self, run_dir: Path, on_result: Callable[[AttackResult], None] | None = None
+    ) -> None:
+        self.results: list[AttackResult] = []
+        self._on_result = on_result
+        self._file: IO[str] = (run_dir / RESULTS_FILE).open("w", encoding="utf-8")
+
+    def record(self, result: AttackResult) -> None:
+        self._file.write(result.model_dump_json() + "\n")
+        self._file.flush()  # so a stopped scan still has every finished result
+        self.results.append(result)
+        if self._on_result is not None:
+            self._on_result(result)
+
+    def __enter__(self) -> RunRecorder:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self._file.close()
+
+
+@dataclass
+class Exchange:
+    """The raw conversation with the target for one attack, before judging."""
+
+    transcript: list[Turn] = field(default_factory=list)
+    defenses_on: list[str] = field(default_factory=list)
+    error: str | None = None
+    latency_ms: float = 0.0
+
+    def retrieved_doc_ids(self) -> list[str]:
+        """Every doc retrieved in any turn, without duplicates, in first-seen order."""
+        seen: list[str] = []
+        for turn in self.transcript:
+            for doc_id in turn.retrieved_doc_ids:
+                if doc_id not in seen:
+                    seen.append(doc_id)
+        return seen
+
+    def first_blocked_by(self) -> str | None:
+        for turn in self.transcript:
+            if turn.blocked_by:
+                return turn.blocked_by
+        return None
+
+
+class AttackExecutor:
+    """Runs single attacks against the target and keeps the knowledge base clean.
+
+    It remembers whether the last attack added a poisoned document, and only
+    resets the target (which re-embeds the whole handbook) when that happened.
+    """
+
+    def __init__(
+        self, target: TargetClient, judge: JudgePipeline, run_id: str, target_model: str
+    ) -> None:
+        self.target = target
+        self.judge = judge
+        self.run_id = run_id
+        self.target_model = target_model
+        self._dirty = True  # we don't know what state the target is in yet
+
+    def reset(self) -> None:
+        self.target.reset()
+        self._dirty = False
+
+    def execute(self, attack: Attack, defense_config: str, attempt: int = 0) -> AttackResult:
+        """Send one attack (all its turns) and judge it. Target errors are recorded, not raised."""
+        return self.judge_exchange(
+            attack, defense_config, self.send(attack, defense_config), attempt
+        )
+
+    def send(self, attack: Attack, defense_config: str) -> Exchange:
+        """Talk to the target: reset if needed, ingest any poison, send every turn."""
+        if self._dirty:
+            self.reset()
+
+        # A fresh session per attack (and per configuration), so earlier attacks
+        # can't influence this one through chat history.
+        session_id = f"{self.run_id}:{defense_config}:{attack.id}"
+        exchange = Exchange()
+        started = time.perf_counter()
+
+        try:
+            if attack.poison_doc is not None:
+                self._dirty = True  # set first, in case ingest half-succeeds
+                self.target.ingest(attack.poison_doc.doc_id, attack.poison_doc.text)
+            for message in attack.turns:
+                turn_started = time.perf_counter()
+                response = self.target.chat(message, session_id, defense_config)
+                exchange.transcript.append(
+                    Turn(
+                        user=message,
+                        answer=response["answer"],
+                        retrieved_doc_ids=response.get("retrieved_doc_ids", []),
+                        blocked_by=response.get("blocked_by"),
+                        latency_ms=(time.perf_counter() - turn_started) * 1000,
+                    )
+                )
+                exchange.defenses_on = response.get("defenses", exchange.defenses_on)
+        except TargetError as exc:
+            exchange.error = str(exc)
+
+        exchange.latency_ms = (time.perf_counter() - started) * 1000
+        return exchange
+
+    def judge_exchange(
+        self, attack: Attack, defense_config: str, exchange: Exchange, attempt: int = 0
+    ) -> AttackResult:
+        """Judge what came back and package everything as an AttackResult."""
+        transcript = exchange.transcript
+        if exchange.error is None:
+            decision = self.judge.judge(attack, transcript)
+            verdicts = decision.verdicts
+            final, decided_by = decision.final_verdict, decision.decided_by
+        else:
+            verdicts, final, decided_by = [], "error", "none"
+
+        return AttackResult(
+            run_id=self.run_id,
+            attack_id=attack.id,
+            parent_id=attack.parent_id,
+            seed_id=attack.root_id,
+            attempt=attempt,
+            strategy=attack.strategy,
+            notes=attack.notes,
+            category=attack.category,
+            owasp=attack.owasp,
+            language=attack.language,
+            defense_config=defense_config,
+            defenses=exchange.defenses_on,
+            poison_doc_id=attack.poison_doc.doc_id if attack.poison_doc else None,
+            poison_doc_text=attack.poison_doc.text if attack.poison_doc else None,
+            transcript=transcript,
+            retrieved_doc_ids=exchange.retrieved_doc_ids(),
+            judge_verdicts=verdicts,
+            final_verdict=final,
+            decided_by=decided_by,
+            latency_ms=exchange.latency_ms,
+            model_names={"target": self.target_model, "judge": "+".join(self.judge.layers)},
+            timestamp=datetime.now(timezone.utc),
+            error=exchange.error,
+        )
+
+
+# --------------------------------------------------------------------------
+# The plain scan
+# --------------------------------------------------------------------------
+
+
 @dataclass
 class ScanSummary:
     run_id: str
@@ -114,7 +317,7 @@ def run_scan(
     run_id: str | None = None,
     on_result: Callable[[AttackResult], None] | None = None,
 ) -> ScanSummary:
-    """Run every attack against every defense configuration and save the results.
+    """Run every attack once against every defense configuration and save the results.
 
     Args:
         attacks: The attacks to run.
@@ -127,114 +330,13 @@ def run_scan(
         on_result: Called after each attack, e.g. to update a progress bar.
     """
     configs = [normalise_defense_config(config) for config in defense_configs]
-    run_id = run_id or new_run_id()
-    run_dir = runs_dir / run_id
-    run_dir.mkdir(parents=True, exist_ok=False)
+    context = start_run(target, judge, configs, attacks, runs_dir, target_url, run_id)
+    executor = AttackExecutor(target, judge, context.run_id, context.target_model)
 
-    health = target.health()  # fails fast if the target isn't running
-    target_model = health.get("model", "unknown")
-
-    info = {
-        "run_id": run_id,
-        "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "target_url": target_url,
-        "target_model": target_model,
-        "defense_configs": configs,
-        "attack_count": len(attacks),
-        "attack_ids": [attack.id for attack in attacks],
-        "judge_layers": judge.layers,
-    }
-    (run_dir / RUN_INFO_FILE).write_text(json.dumps(info, indent=2), encoding="utf-8")
-
-    summary = ScanSummary(run_id=run_id, run_dir=run_dir)
-    results_path = run_dir / RESULTS_FILE
-    with results_path.open("w", encoding="utf-8") as results_file:
+    with RunRecorder(context.run_dir, on_result) as recorder:
         for config in configs:
-            # Always start each configuration from a clean knowledge base.
-            target.reset()
-            dirty = False
             for attack in attacks:
-                if dirty:
-                    target.reset()
-                    dirty = False
-                result = run_attack(attack, target, judge, config, run_id, target_model)
-                dirty = attack.poison_doc is not None
+                recorder.record(executor.execute(attack, config))
+        executor.reset()  # leave the target clean for whoever uses it next
 
-                results_file.write(result.model_dump_json() + "\n")
-                results_file.flush()
-                summary.results.append(result)
-                if on_result is not None:
-                    on_result(result)
-        # Leave the target clean for whoever uses it next.
-        target.reset()
-    return summary
-
-
-def run_attack(
-    attack: Attack,
-    target: TargetClient,
-    judge: JudgePipeline,
-    defense_config: str,
-    run_id: str,
-    target_model: str,
-) -> AttackResult:
-    """Run one attack (all its turns) and judge it. Errors are recorded, not raised."""
-    # A fresh session per attack (and per configuration), so earlier attacks
-    # can't influence this one through chat history.
-    session_id = f"{run_id}:{defense_config}:{attack.id}"
-    transcript: list[Turn] = []
-    defenses_on: list[str] = []
-    error: str | None = None
-    started = time.perf_counter()
-
-    try:
-        if attack.poison_doc is not None:
-            target.ingest(attack.poison_doc.doc_id, attack.poison_doc.text)
-        for message in attack.turns:
-            turn_started = time.perf_counter()
-            response = target.chat(message, session_id, defense_config)
-            transcript.append(
-                Turn(
-                    user=message,
-                    answer=response["answer"],
-                    retrieved_doc_ids=response.get("retrieved_doc_ids", []),
-                    blocked_by=response.get("blocked_by"),
-                    latency_ms=(time.perf_counter() - turn_started) * 1000,
-                )
-            )
-            defenses_on = response.get("defenses", defenses_on)
-    except TargetError as exc:
-        error = str(exc)
-
-    if error is None:
-        decision = judge.judge(attack, transcript)
-        verdicts, final, decided_by = decision.verdicts, decision.final_verdict, decision.decided_by
-    else:
-        verdicts, final, decided_by = [], "error", "none"
-
-    retrieved: list[str] = []
-    for turn in transcript:
-        for doc_id in turn.retrieved_doc_ids:
-            if doc_id not in retrieved:
-                retrieved.append(doc_id)
-
-    return AttackResult(
-        run_id=run_id,
-        attack_id=attack.id,
-        parent_id=attack.parent_id,
-        category=attack.category,
-        owasp=attack.owasp,
-        language=attack.language,
-        defense_config=defense_config,
-        defenses=defenses_on,
-        poison_doc_id=attack.poison_doc.doc_id if attack.poison_doc else None,
-        transcript=transcript,
-        retrieved_doc_ids=retrieved,
-        judge_verdicts=verdicts,
-        final_verdict=final,
-        decided_by=decided_by,
-        latency_ms=(time.perf_counter() - started) * 1000,
-        model_names={"target": target_model, "judge": "+".join(judge.layers)},
-        timestamp=datetime.now(timezone.utc),
-        error=error,
-    )
+    return ScanSummary(run_id=context.run_id, run_dir=context.run_dir, results=recorder.results)

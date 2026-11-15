@@ -13,7 +13,8 @@ Each defense guards a different point in the RAG pipeline:
    chunk in `<data> ... </data>` tags, with a note in the system prompt that
    tagged text is reference material, not instructions.
 3. **output_leak_filter**: checks the answer before it is sent. Blocks it if it
-   contains a canary, or repeats a large part of the system prompt.
+   contains a canary or the restricted student's personal data, or repeats a
+   large part of the system prompt.
 4. **judge_guard** (M4): runs the fine-tuned judge on the answer.
 
 No single defense is perfect. Measuring how much each one helps, and how
@@ -26,7 +27,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from redrag.canaries import find_canaries
+from redrag.canaries import SENSITIVE_STRINGS, find_canaries
 from redrag.config import DefensesConfig
 
 DEFENSE_NAMES = ("input_filter", "context_sanitiser", "output_leak_filter", "judge_guard")
@@ -207,10 +208,20 @@ def check_output(
     answer: str,
     system_prompt: str,
     overlap_threshold: float = DEFAULT_OVERLAP_THRESHOLD,
+    user_message: str = "",
 ) -> FilterResult:
-    """Block the answer if it leaks a canary or a large part of the system prompt."""
+    """Block the answer if it leaks a canary, restricted personal data, or a large
+    part of the system prompt.
+
+    Personal data the user typed themselves (e.g. their own roll number in the
+    question) is allowed back out. Repeating it leaks nothing new, and blocking
+    it would annoy normal users.
+    """
     if find_canaries(answer):
         return FilterResult(blocked=True, reason="answer contained a canary")
+    for value in SENSITIVE_STRINGS:
+        if value.lower() in answer.lower() and value.lower() not in user_message.lower():
+            return FilterResult(blocked=True, reason="answer contained restricted personal data")
     overlap = system_prompt_overlap(answer, system_prompt)
     if overlap >= overlap_threshold:
         return FilterResult(blocked=True, reason=f"system prompt overlap {overlap:.2f}")

@@ -5,7 +5,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from redrag.attacks.schema import AttackResult
-from redrag.eval.metrics import ASRStat, asr_table, compute_asr, defense_configs, group_asr
+from redrag.eval.metrics import (
+    ASRStat,
+    asr_table,
+    best_per_seed,
+    compute_asr,
+    defense_configs,
+    group_asr,
+    original_attempts,
+)
 
 
 def result(verdict: str, category: str = "direct_injection", config: str = "none"):
@@ -75,3 +83,20 @@ def test_defense_configs_keep_run_order():
         result("fail", config="all"),
     ]
     assert defense_configs(results) == ["all", "none"]
+
+
+def test_best_per_seed_prefers_success_then_unsure_then_fail():
+    rows = [result("fail"), result("unsure"), result("success"), result("fail")]
+    for index, row in enumerate(rows):
+        row.attempt = index
+        row.seed_id = "dir-001"
+    assert [r.final_verdict for r in best_per_seed(rows)] == ["success"]
+    assert [r.final_verdict for r in best_per_seed(rows[:2] + rows[3:])] == ["unsure"]
+    assert [r.attempt for r in original_attempts(rows)] == [0]
+
+
+def test_best_per_seed_keeps_configs_apart():
+    rows = [result("success", config="none"), result("fail", config="all")]
+    for row in rows:
+        row.seed_id = "dir-001"
+    assert sorted(r.defense_config for r in best_per_seed(rows)) == ["all", "none"]
