@@ -1,0 +1,15 @@
+# Dependencies for the hosted dashboard demo (Streamlit Community Cloud).
+#
+# Community Cloud uses the requirements file next to the app's entry point
+# (dashboard/app.py) before the one in the repo root. The dashboard only reads
+# saved scans, so it needs none of the heavy packages (PyTorch, Chroma, Ollama
+# clients, Phoenix). The full project still installs from ../requirements.txt.
+streamlit==1.65.0
+pandas==2.3.3
+altair==6.2.2
+matplotlib==3.10.9
+pydantic==2.14.3
+pyyaml==6.0.3
+# The judge pipeline (used to render the judge-agreement table) imports the
+# tracing helpers, which need only the lightweight OpenTelemetry API.
+opentelemetry-api==1.45.2

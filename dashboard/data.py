@@ -47,19 +47,41 @@ class RunInfo:
     configs: list[str]
     attack_count: int
     has_benign: bool
+    title: str = ""  # set for the bundled demo scans (demo/runs/index.json)
 
     @property
     def label(self) -> str:
         """e.g. "20261116-034159 - scan - llama3.2:3b - 16 configurations"."""
+        if self.title:
+            return self.title
         configs = len(self.configs)
         noun = "configuration" if configs == 1 else "configurations"
         return f"{self.run_id} - {self.mode} - {self.target_model} - {configs} {noun}"
 
 
 def list_runs(runs_dir: Path) -> list[RunInfo]:
-    """Every saved scan in `runs_dir`, newest first (run ids are timestamps)."""
+    """Every saved scan in `runs_dir`, newest first (run ids are timestamps).
+
+    If the folder has an `index.json` (the bundled demo scans do), its order and
+    titles are used instead: `[{"run_id": ..., "title": ...}, ...]`.
+    """
     if not runs_dir.exists():
         return []
+    runs = _scan_folder(runs_dir)
+    index_path = runs_dir / "index.json"
+    if index_path.exists():
+        by_id = {run.run_id: run for run in runs}
+        ordered = []
+        for entry in json.loads(index_path.read_text(encoding="utf-8")):
+            run = by_id.pop(entry["run_id"], None)
+            if run is not None:
+                run.title = entry.get("title", "")
+                ordered.append(run)
+        runs = ordered + list(by_id.values())
+    return runs
+
+
+def _scan_folder(runs_dir: Path) -> list[RunInfo]:
     runs = []
     for path in sorted(runs_dir.iterdir(), reverse=True):
         if not (path / "results.jsonl").exists():

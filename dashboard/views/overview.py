@@ -53,17 +53,17 @@ if run.agent_mode:
     outcomes = data.seed_outcomes(run.results, focus)
     tile(
         tiles[0],
-        f"ASR as written ({focus})",
+        "ASR as written",
         theme.pct(before),
-        help="Share of seed attacks that got through on their first try.",
+        help=f"Share of seed attacks that got through on their first try ({focus}).",
     )
     tile(
         tiles[1],
-        f"ASR after the agent ({focus})",
+        "ASR after the agent",
         theme.pct(after),
         f"{((after or 0) - (before or 0)) * 100:+.0f} pts",
         delta_color="inverse",  # more attacks through is bad for the defender
-        help="A seed counts as broken if any of its rewritten variants got through.",
+        help=f"A seed counts as broken if any of its rewritten variants got through ({focus}).",
     )
     tile(
         tiles[2],

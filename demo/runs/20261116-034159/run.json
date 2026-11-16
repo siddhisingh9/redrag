@@ -1,0 +1,59 @@
+{
+  "run_id": "20261116-034159",
+  "started_at": "2026-11-15T22:11:59+00:00",
+  "mode": "scan",
+  "target_url": "http://127.0.0.1:8001",
+  "target_model": "llama3.2:3b",
+  "available_defenses": [
+    "input_filter",
+    "context_sanitiser",
+    "output_leak_filter",
+    "judge_guard"
+  ],
+  "defense_configs": [
+    "none",
+    "input_filter",
+    "context_sanitiser",
+    "output_leak_filter",
+    "judge_guard",
+    "input_filter,context_sanitiser",
+    "input_filter,output_leak_filter",
+    "input_filter,judge_guard",
+    "context_sanitiser,output_leak_filter",
+    "context_sanitiser,judge_guard",
+    "output_leak_filter,judge_guard",
+    "input_filter,context_sanitiser,output_leak_filter",
+    "input_filter,context_sanitiser,judge_guard",
+    "input_filter,output_leak_filter,judge_guard",
+    "context_sanitiser,output_leak_filter,judge_guard",
+    "all"
+  ],
+  "attack_count": 20,
+  "attack_ids": [
+    "exf-001",
+    "dir-001",
+    "ind-001",
+    "mte-001",
+    "spe-001",
+    "exf-002",
+    "dir-002",
+    "ind-002",
+    "mte-002",
+    "spe-002",
+    "exf-003",
+    "dir-003",
+    "ind-003",
+    "mte-003",
+    "spe-003",
+    "exf-004",
+    "dir-004",
+    "ind-004",
+    "mte-004",
+    "spe-004"
+  ],
+  "judge_layers": [
+    "rules",
+    "classifier"
+  ],
+  "benign_count": 50
+}

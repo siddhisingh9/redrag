@@ -4,10 +4,15 @@ The run picker lives in the sidebar and is drawn by `app.py` on every page, so
 the chosen run stays selected when you move between Overview, Attacks and
 Lineage. Loaded runs are cached and reloaded only when results.jsonl changes
 (e.g. after `redrag report --rejudge`).
+
+Demo mode: with no scans of your own (a fresh clone, or the hosted demo on
+Streamlit Community Cloud), the dashboard shows the example scans bundled in
+`demo/runs/`, read-only. REDRAG_DEMO=1 forces it on, REDRAG_DEMO=0 off.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import streamlit as st
@@ -16,14 +21,23 @@ from dashboard.data import Run, RunInfo, list_runs, load_run
 from redrag.config import PROJECT_ROOT, Config, load_config, resolve_path
 
 RUN_KEY = "run_id"  # session-state key of the run picker
+DEMO_RUNS = PROJECT_ROOT / "demo" / "runs"
 
 
 def config() -> Config:
     return load_config()
 
 
+def demo_mode() -> bool:
+    """True when showing the bundled example scans instead of your own."""
+    forced = os.environ.get("REDRAG_DEMO")
+    if forced in ("0", "1"):
+        return forced == "1"
+    return DEMO_RUNS.exists() and not list_runs(resolve_path(config().output.runs_dir))
+
+
 def runs_dir() -> Path:
-    return resolve_path(config().output.runs_dir)
+    return DEMO_RUNS if demo_mode() else resolve_path(config().output.runs_dir)
 
 
 def all_runs() -> list[RunInfo]:

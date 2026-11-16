@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RedRAG</title>
+<style>
+:root { --bg: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --line: #e1e0d9; --link: #256abf; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --line: #2c2c2a; --link: #6da7ec; }
+}
+body { margin: 0; background: var(--bg); color: var(--ink);
+       font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 720px; margin: 0 auto; padding: 56px 16px; }
+h1 { font-size: 28px; margin: 0 0 8px; }
+h2 { font-size: 16px; margin: 40px 0 8px; color: var(--ink-2); font-weight: 600; }
+p { margin: 0 0 12px; color: var(--ink-2); }
+a { color: var(--link); }
+ul { list-style: none; padding: 0; margin: 0; }
+li { border-top: 1px solid var(--line); padding: 14px 0; }
+li a { font-weight: 600; }
+li p { margin: 4px 0 0; font-size: 15px; }
+</style>
+</head>
+<body>
+<main>
+<h1>RedRAG</h1>
+<p>Automated red-teaming for RAG chatbots: prompt injection, data exfiltration and
+system-prompt extraction attacks, a three-layer judge, and a measurement of what each
+defense costs in false refusals. All secrets in the target app are fake.</p>
+<p><a href="https://redrag.streamlit.app">Open the dashboard</a> &middot;
+<a href="https://github.com/siddhisingh9/redrag">Source on GitHub</a></p>
+<h2>Scan reports</h2>
+<ul>
+<li><a href="reports/defense-combinations.html">Every defense combination</a><p>20 attacks and 50 harmless questions against all 16 on/off combinations of the four defenses: attack success rate vs false-refusal rate.</p></li>
+<li><a href="reports/agent-vs-rule-defenses.html">Adaptive attacker vs rule-based defenses</a><p>55 seed attacks; failed ones are rewritten by the LangGraph agent (up to 4 tries) against the input filter, context sanitiser and output leak filter.</p></li>
+<li><a href="reports/agent-vs-judge-guard.html">Adaptive attacker vs the judge guard</a><p>The same 55 seeds and rewrites against the fine-tuned classifier used as a defense (judge_guard).</p></li>
+</ul>
+</main>
+</body>
+</html>

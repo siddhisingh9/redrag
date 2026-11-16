@@ -137,7 +137,7 @@ def test_overview_of_an_agent_run(runs):
     at.run()
     assert not at.exception, at.exception
     tiles = {m.label: m.value for m in at.metric}
-    assert "Seeds rescued by the agent" in tiles and "ASR after the agent (all)" in tiles
+    assert "Seeds rescued by the agent" in tiles and "ASR after the agent" in tiles
 
 
 def test_run_can_be_opened_by_link(runs):
@@ -160,7 +160,8 @@ def test_lineage_page_points_plain_scans_to_agent_runs(runs):
     assert any(m.label == "Rescued by the agent" for m in at.metric)
 
 
-def test_empty_runs_folder_shows_a_hint():
+def test_empty_runs_folder_shows_a_hint(monkeypatch):
+    monkeypatch.setenv("REDRAG_DEMO", "0")  # otherwise the bundled demo scans are shown
     at = app_test().run()
     assert not at.exception, at.exception
     assert "No saved scans yet" in at.info[0].value
@@ -179,3 +180,77 @@ def test_label_page_saves_a_label(runs, tmp_path):
     assert len(saved) == 1
     assert saved[0]["label"] == "fail" and saved[0]["method"] == "blind"  # no suggestions file
     assert "1 of 150 labels" in at.get("progress")[0].proto.text
+
+
+def test_theme_palettes_have_the_length_streamlit_requires():
+    """Streamlit silently ignores a sequential palette that isn't exactly 10 colours."""
+    import re
+
+    config = (PROJECT_ROOT / ".streamlit" / "config.toml").read_text(encoding="utf-8")
+    ramps = re.findall(r"chartSequentialColors = \[([^\]]*)\]", config)
+    assert len(ramps) == 2  # light and dark
+    assert all(len(re.findall(r"#[0-9a-f]{6}", ramp)) == 10 for ramp in ramps)
+
+
+# ------------------------------------------------------------------- demo
+
+
+def test_demo_mode_shows_bundled_scans_read_only():
+    """With no scans of your own (fresh clone, hosted demo), the example scans are shown."""
+    at = app_test().run()  # conftest's runs folder is empty, so demo mode switches on
+    assert not at.exception, at.exception
+    picker = at.selectbox(key="run_id")
+    assert picker.value == "20261116-034159"  # demo/runs/index.json puts the sweep first
+    assert "Every defense combination" in picker.format_func(picker.value)
+    assert {m.label for m in at.metric} >= {"ASR, no defenses", "FRR, all defenses"}
+    # The Label page writes files, so the read-only demo doesn't register it.
+    with pytest.raises(ValueError, match="Could not find a navigation page"):
+        at.switch_page("views/label.py").run()
+    for page in ["views/attacks.py", "views/lineage.py"]:
+        at.switch_page(page).run()
+        assert not at.exception, (page, at.exception)
+
+    titles = [run.title for run in data.list_runs(PROJECT_ROOT / "demo" / "runs")]
+    assert all(titles) and len(titles) == 3
+
+
+def test_demo_runs_without_the_heavy_dependencies():
+    """The hosted demo installs only dashboard/requirements.txt: no PyTorch, Chroma,
+    Ollama/Gemini clients, FastAPI or Phoenix. Run every page with those blocked."""
+    import subprocess
+    import sys
+
+    script = """
+import importlib.abc, sys
+HEAVY = ("torch", "transformers", "sentence_transformers", "chromadb", "fastapi", "uvicorn",
+         "langgraph", "google.genai", "phoenix", "opentelemetry.sdk", "datasets", "peft",
+         "mcp", "httpx", "typer")
+class Block(importlib.abc.MetaPathFinder):
+    def find_spec(self, name, path, target=None):
+        if any(name == h or name.startswith(h + ".") for h in HEAVY):
+            raise ImportError("not in dashboard/requirements.txt: " + name)
+sys.meta_path.insert(0, Block())
+from streamlit.testing.v1 import AppTest
+at = AppTest.from_file(sys.argv[1], default_timeout=60).run()
+assert not at.exception, at.exception
+for page in ["views/attacks.py", "views/lineage.py"]:
+    at.switch_page(page).run()
+    assert not at.exception, (page, at.exception)
+print("ok")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, APP],
+        cwd=PROJECT_ROOT,
+        env={**__import__("os").environ, "REDRAG_DEMO": "1"},
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert result.returncode == 0 and "ok" in result.stdout, result.stderr[-2000:]
+
+
+def test_dashboard_requirements_are_pinned():
+    lines = (PROJECT_ROOT / "dashboard" / "requirements.txt").read_text(encoding="utf-8")
+    packages = [line for line in lines.splitlines() if line and not line.startswith("#")]
+    assert packages and all("==" in line for line in packages)
+    assert not any(line.split("==")[0] in ("torch", "chromadb") for line in packages)

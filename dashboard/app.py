@@ -9,7 +9,9 @@ Four pages (spec 6.10):
 - Label:    hand-label results as success/fail (same file as `redrag label`).
 
 It only reads saved scans in `runs/` (and writes labels on the Label page). It
-never attacks anything, so it is safe to leave open while scans run.
+never attacks anything, so it is safe to leave open while scans run. With no
+scans of your own it shows the bundled examples in `demo/runs/`, read-only
+(this is also how the hosted demo runs; see common.demo_mode).
 """
 
 from __future__ import annotations
@@ -30,16 +32,23 @@ st.set_page_config(page_title="RedRAG", page_icon=":material/shield:", layout="w
 theme.apply()
 
 # Page paths are relative to this file (Streamlit resolves them from the main script).
+demo = common.demo_mode()
 pages = [
     st.Page("views/overview.py", title="Overview", icon=":material/dashboard:", default=True),
     st.Page("views/attacks.py", title="Attacks", icon=":material/table_rows:"),
     st.Page("views/lineage.py", title="Lineage", icon=":material/account_tree:"),
-    st.Page("views/label.py", title="Label", icon=":material/rule:"),
 ]
+if not demo:  # labelling writes files, so the read-only demo leaves it out
+    pages.append(st.Page("views/label.py", title="Label", icon=":material/rule:"))
 page = st.navigation(pages)
 
 with st.sidebar:
     st.markdown("**RedRAG**  \nRed-teaming results for RAG apps")
+    if demo:
+        st.caption(
+            "Example scans of the bundled target app (llama3.2:3b). "
+            "[Source on GitHub](https://github.com/siddhisingh9/redrag)"
+        )
 if page.title != "Label":  # labelling works across all runs, not one
     common.run_picker()
 
