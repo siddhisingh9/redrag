@@ -295,4 +295,4 @@ if agreement:
 
 report = info.path / "report.html"
 if report.exists():
-    st.caption(f"Full report: `{report}`")
+    st.caption(f"Full report: `{common.display_path(report)}`")

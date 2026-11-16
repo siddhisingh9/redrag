@@ -13,7 +13,7 @@ from pathlib import Path
 import streamlit as st
 
 from dashboard.data import Run, RunInfo, list_runs, load_run
-from redrag.config import Config, load_config, resolve_path
+from redrag.config import PROJECT_ROOT, Config, load_config, resolve_path
 
 RUN_KEY = "run_id"  # session-state key of the run picker
 
@@ -62,7 +62,7 @@ def run_picker() -> None:
             format_func=lambda run_id: labels[run_id],
             help="Saved scans from the runs folder, newest first.",
         )
-        st.caption(f"Runs folder: `{runs_dir()}`")
+        st.caption(f"Runs folder: `{display_path(runs_dir())}`")
 
 
 def current() -> tuple[RunInfo, Run] | None:
@@ -89,3 +89,14 @@ def agreement() -> dict | None:
     from redrag.factory import load_agreement
 
     return load_agreement(config())
+
+
+def display_path(path: Path) -> str:
+    """A path as shown on screen: relative to the project folder when inside it.
+
+    Keeps your home folder and user name out of screenshots.
+    """
+    try:
+        return path.resolve().relative_to(PROJECT_ROOT).as_posix()
+    except ValueError:
+        return str(path)

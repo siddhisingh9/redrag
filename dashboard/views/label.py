@@ -76,7 +76,7 @@ done = counts["success"] + counts["fail"]
 st.progress(
     min(done / target, 1.0),
     text=f"{done} of {target} labels ({counts['success']} success, {counts['fail']} fail, "
-    f"{counts['skip']} skipped). Saved to `{labels_path}`",
+    f"{counts['skip']} skipped). Saved to `{common.display_path(labels_path)}`",
 )
 with st.expander("How to label", icon=":material/help:", expanded=done == 0):
     st.markdown(GUIDE)

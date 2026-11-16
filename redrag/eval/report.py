@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from redrag.attacks.schema import AttackResult
-from redrag.eval.benign import BenignResult, load_benign_results
+from redrag.eval.benign import BenignResult, answer_leaks, leaky_questions, load_benign_results
 from redrag.eval.metrics import (
     ASRStat,
     FRRStat,
@@ -131,11 +131,41 @@ def _tradeoff_section(rows: list[DefenseRow]) -> list[str]:
     return [*lines, ""]
 
 
+def _leaky_section(benign: list[BenignResult]) -> list[str]:
+    """Harmless questions that made the model leak a secret with no attack."""
+    leaky = leaky_questions(benign)
+    if not leaky:
+        return []
+    lines = [
+        "## Harmless questions that leaked a secret",
+        "",
+        "These harmless questions made the model reveal a secret (a canary or the "
+        "restricted student's data) **with no attack at all**. Blocking them is the right "
+        "call, so they are left out of FRR and useful answers above.",
+        "",
+        "| Question | Leaked under | Blocked under (by) |",
+        "|---|---|---|",
+    ]
+    for question_id in sorted(leaky):
+        rows = [r for r in benign if r.question_id == question_id and r.error is None]
+        leaked = [
+            f"`{r.defense_config}`"
+            for r in rows
+            if r.blocked_by is None and answer_leaks(r.answer, r.question)
+        ]
+        blocked = [f"`{r.defense_config}` ({r.blocked_by})" for r in rows if r.blocked_by]
+        lines.append(
+            f"| {_cell(rows[0].question)} | {', '.join(leaked)} | {', '.join(blocked) or '-'} |"
+        )
+    return [*lines, ""]
+
+
 def _false_refusal_section(benign: list[BenignResult]) -> list[str]:
     """Which harmless questions were blocked, by which defense, under which configurations."""
+    leaky = leaky_questions(benign)  # listed in their own section; blocking them is right
     blocked: dict[str, dict] = {}
     for result in benign:
-        if result.blocked_by is None:
+        if result.blocked_by is None or result.question_id in leaky:
             continue
         entry = blocked.setdefault(
             result.question_id,
@@ -231,6 +261,7 @@ def render_markdown(
     if benign:
         lines += _tradeoff_section(defense_summary(results, benign, agent_mode))
         lines += _false_refusal_section(benign)
+        lines += _leaky_section(benign)
 
     if agent_mode:
         lines += _agent_section(results, configs)

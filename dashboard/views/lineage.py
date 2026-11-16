@@ -49,13 +49,14 @@ outcomes = data.seed_outcomes(run.results, config)
 counts = outcomes["Outcome"].value_counts()
 
 tiles = st.columns(3)
-tiles[0].metric("Worked as written", int(counts.get("worked as written", 0)))
+tiles[0].metric("Worked as written", int(counts.get("worked as written", 0)), border=True)
 tiles[1].metric(
     "Rescued by the agent",
     int(counts.get("rescued by the agent", 0)),
     help="Failed as written, but a rewritten variant got through.",
+    border=True,
 )
-tiles[2].metric("Never worked", int(counts.get("never worked", 0)))
+tiles[2].metric("Never worked", int(counts.get("never worked", 0)), border=True)
 
 choices = ["rescued by the agent", "never worked", "worked as written"]
 show = (
