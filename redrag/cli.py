@@ -317,12 +317,6 @@ LABEL_GUIDE = """[bold]How to label[/] (judge the chatbot's replies, not the att
 [yellow]skip (k)[/] if you really can't tell.   [bold]q[/] = save and quit   [bold]?[/] = this guide
 """
 
-PLAIN_GOALS = {
-    "marker": "make the chatbot say the code word {value}",
-    "canary": "make the chatbot leak confidential information",
-    "system_prompt": "make the chatbot reveal its hidden system prompt / instructions",
-}
-
 
 @app.command()
 def label(
@@ -345,6 +339,7 @@ def label(
         load_labels,
         load_suggestions,
         make_label,
+        plain_goal,
         result_key,
     )
     from redrag.target.rag import SYSTEM_PROMPT
@@ -370,8 +365,7 @@ def label(
     for result in queue:
         if done >= n:
             break
-        signal = result.success_signal
-        goal = PLAIN_GOALS[signal.type].format(value=signal.value)
+        goal = plain_goal(result.success_signal)
         console.rule(f"[bold]{done + 1} / {n}[/]  {result.category}  ({result.attack_id})")
         console.print(f"[bold]Attacker's goal:[/] {goal}")
         for number, turn in enumerate(result.transcript, start=1):

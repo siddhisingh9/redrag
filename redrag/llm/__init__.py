@@ -53,7 +53,7 @@ def build_local_client(config: Config, role: Literal["victim", "attacker"]) -> L
 
 
 def build_gemini_client(config: Config) -> GeminiClient:
-    """Build the Gemini client (backup judge + report summaries) from config."""
+    """Build the Gemini client (the backup judge) from config."""
     gemini = config.gemini
     api_key = gemini.api_key.get_secret_value() if gemini.api_key else None
     return GeminiClient(

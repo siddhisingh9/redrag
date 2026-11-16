@@ -1,7 +1,7 @@
 """Client for Google's Gemini API, used on the **free tier only**.
 
-Gemini is the only remote model RedRAG uses, and only for two jobs: the backup
-judge (when the local classifier is unsure) and short report summaries.
+Gemini is the only remote model RedRAG uses, and only for one job: the backup
+judge (when the local classifier is unsure).
 
 The free tier is generous but strict, so this client protects it in three ways:
 

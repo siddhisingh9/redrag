@@ -4,6 +4,7 @@ spec.md
 
 # Secrets: API keys live only in .env (see .env.example for the variable list).
 .env
+.streamlit/secrets.toml
 .env.*
 !.env.example
 
