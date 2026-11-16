@@ -34,12 +34,11 @@ def pipeline(tmp_path: Path):
     """An offline RAG pipeline: hashing embedder + Chroma in a temp folder, clean handbook."""
     from redrag.target.rag import ChromaStore, HashingEmbedder, RAGPipeline
 
-    rag = RAGPipeline(
-        store=ChromaStore(tmp_path / "chroma", collection="test"),
-        embedder=HashingEmbedder(),
-    )
+    store = ChromaStore(tmp_path / "chroma", collection="test")
+    rag = RAGPipeline(store=store, embedder=HashingEmbedder())
     rag.reset()
-    return rag
+    yield rag
+    store.close()  # free its file handles (Windows allows only 512 C file streams)
 
 
 @pytest.fixture(scope="session")

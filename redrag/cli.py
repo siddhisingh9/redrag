@@ -1,11 +1,12 @@
-"""Command-line interface: `redrag scan | report | serve-target | mcp`.
+"""Command-line interface: `redrag scan | report | serve-target | mcp | ci-check | ...`.
 
 Run it either way:
     python -m redrag.cli --help
     redrag --help            (after `pip install -e .`)
 
 Built with Typer (turns typed Python functions into commands) and Rich (pretty
-terminal output). `mcp` is still a placeholder (M6).
+terminal output). The scan-building helpers live in `redrag.factory`, shared
+with the MCP server (`redrag mcp`) and the CI gate (`redrag ci-check`).
 
 Heavy imports (FastAPI, Chroma, the runner) happen inside the commands, so
 `redrag --help` stays fast.
@@ -21,6 +22,13 @@ from rich.console import Console
 from rich.table import Table
 
 from redrag.config import Config, load_config, resolve_path
+from redrag.factory import (
+    build_judge,
+    latest_run_dir,
+    load_classifier,
+    mock_target_client,
+    write_reports,
+)
 
 app = typer.Typer(
     name="redrag",
@@ -29,12 +37,6 @@ app = typer.Typer(
     add_completion=False,
 )
 console = Console()
-
-
-def _not_built_yet(command: str, milestone: str) -> None:
-    """Tell the user a command is planned but not implemented yet, and exit with an error."""
-    console.print(f"[yellow]`redrag {command}` is not built yet; it arrives in {milestone}.[/]")
-    raise typer.Exit(code=1)
 
 
 @app.command()
@@ -135,7 +137,7 @@ def scan(
     questions = load_benign_questions() if benign else []
 
     if mock_target:
-        http = _mock_target_client(config)
+        http = mock_target_client(config)
         url = "in-process mock target"
     else:
         url = target_url or config.target.url
@@ -146,7 +148,7 @@ def scan(
         tracing.setup_tracing(config.tracing.endpoint, config.tracing.project, "redrag-scanner")
         console.print(f"Tracing to Phoenix at [cyan]{config.tracing.endpoint}[/]")
 
-    judge = _build_judge(config, use_gemini=gemini)
+    judge = build_judge(config, use_gemini=gemini)
     runs_dir = output_dir or resolve_path(config.output.runs_dir)
     try:
         if all_combinations:
@@ -205,7 +207,7 @@ def scan(
         http.close()
         tracing.shutdown_tracing()  # sends any spans still buffered
 
-    markdown_path, html_path = _write_reports(summary.run_dir, config)
+    markdown_path, html_path = write_reports(summary.run_dir, config)
     _print_asr_table(summary.results)
     _print_tradeoff(summary.results, summary.benign_results)
     console.print(f"Results: {summary.run_dir / 'results.jsonl'}")
@@ -231,7 +233,7 @@ def report(
 
     config = load_config()
     if run_dir is None:
-        run_dir = _latest_run_dir(resolve_path(config.output.runs_dir))
+        run_dir = latest_run_dir(resolve_path(config.output.runs_dir))
         if run_dir is None:
             console.print("[red]No runs found. Run `redrag scan` first.[/]")
             raise typer.Exit(code=1)
@@ -240,22 +242,13 @@ def report(
         raise typer.Exit(code=1)
 
     if rejudge:
-        _rejudge_run(run_dir, _build_judge(config, use_gemini=gemini))
+        _rejudge_run(run_dir, build_judge(config, use_gemini=gemini))
 
-    markdown_path, html_path = _write_reports(run_dir, config)
+    markdown_path, html_path = write_reports(run_dir, config)
     results = load_results(run_dir)
     _print_asr_table(results)
     _print_tradeoff(results, load_benign_results(run_dir))
     console.print(f"Report: [bold]{html_path}[/]  (and {markdown_path.name})")
-
-
-def _write_reports(run_dir: Path, config: Config) -> tuple[Path, Path]:
-    """report.md and report.html, both including the latest judge-agreement table."""
-    from redrag.eval.html_report import write_html_report
-    from redrag.eval.report import write_markdown_report
-
-    agreement = _load_agreement(config)
-    return write_markdown_report(run_dir, agreement), write_html_report(run_dir, agreement)
 
 
 def _print_tradeoff(results, benign_results) -> None:
@@ -498,7 +491,7 @@ def judge_eval(
         console.print("[red]No hand labels to evaluate. Run `redrag label` first.[/]")
         raise typer.Exit(code=1)
 
-    judge = _build_judge(config, use_gemini=gemini)
+    judge = build_judge(config, use_gemini=gemini)
     with Progress(console=console, transient=True) as progress:
         task = progress.add_task("Judging", total=len(labels))
         data = evaluate_judges(
@@ -517,62 +510,6 @@ def judge_eval(
     console.print(f"Saved to {md_path}. Every scan report now includes this table.")
 
 
-def _load_classifier(config: Config):
-    """The fine-tuned judge if one has been trained and copied in, else None."""
-    from redrag.judge.classifier import JudgeClassifier, model_available
-
-    model_dir = resolve_path(config.judge.classifier_path)
-    if not model_available(model_dir):
-        return None
-    return JudgeClassifier(model_dir)
-
-
-def _build_judge(config: Config, use_gemini: bool = True):
-    """rules -> classifier (if trained) -> Gemini (if allowed and a key is set)."""
-    from redrag.judge.pipeline import JudgePipeline
-    from redrag.target.rag import SYSTEM_PROMPT
-
-    llm_judge = None
-    if use_gemini and config.judge.use_gemini and config.gemini.api_key is not None:
-        from redrag.judge.llm_judge import GeminiJudge
-        from redrag.llm import build_gemini_client
-
-        llm_judge = GeminiJudge(build_gemini_client(config), SYSTEM_PROMPT)
-    return JudgePipeline(
-        SYSTEM_PROMPT,
-        config.judge.overlap_threshold,
-        classifier=_load_classifier(config),
-        llm_judge=llm_judge,
-        unsure_low=config.judge.unsure_low,
-        unsure_high=config.judge.unsure_high,
-    )
-
-
-def _load_agreement(config: Config) -> dict | None:
-    from redrag.eval.judge_eval import load_agreement
-
-    return load_agreement(resolve_path(config.judge.labels_file).parent / "judge_agreement.json")
-
-
-def _mock_target_client(config: Config):
-    """An in-process target: MockClient + hashing embedder + in-memory Chroma."""
-    from fastapi.testclient import TestClient
-
-    from redrag.llm import MockClient
-    from redrag.target.app import create_app
-    from redrag.target.rag import ChromaStore, HashingEmbedder, RAGPipeline
-
-    pipeline = RAGPipeline(
-        store=ChromaStore(path=None, collection="mock_target"),
-        embedder=HashingEmbedder(),
-        chunk_size=config.rag.chunk_size,
-        chunk_overlap=config.rag.chunk_overlap,
-        top_k=config.rag.top_k,
-    )
-    app_ = create_app(config=config, llm=MockClient(model="mock-victim"), pipeline=pipeline)
-    return TestClient(app_)
-
-
 def _build_mutator(kind: str, config: Config):
     """The agent's attack rewriter: the attacker LLM (Ollama) or offline templates."""
     from redrag.agent.mutators import LLMMutator, TemplateMutator
@@ -581,14 +518,6 @@ def _build_mutator(kind: str, config: Config):
     if kind == "template" or config.llm.provider == "mock":
         return TemplateMutator()
     return LLMMutator(build_local_client(config, "attacker"))
-
-
-def _latest_run_dir(runs_dir: Path) -> Path | None:
-    """Run ids are timestamps, so the alphabetically last folder is the newest."""
-    if not runs_dir.exists():
-        return None
-    runs = sorted(p for p in runs_dir.iterdir() if (p / "results.jsonl").exists())
-    return runs[-1] if runs else None
 
 
 def _print_asr_table(results) -> None:
@@ -642,6 +571,12 @@ def serve_target(
         help="Send the target's spans (retrieval, LLM call, defenses) to Arize Phoenix. "
         "Default: tracing.enabled in config.",
     ),
+    guard: bool = typer.Option(
+        True,
+        "--guard/--no-guard",
+        help="Offer the judge_guard defense if a trained judge model exists. "
+        "--no-guard keeps 'all' to the three rule-based defenses (as in CI).",
+    ),
 ) -> None:
     """Start the deliberately vulnerable target RAG app (FastAPI)."""
     # Imported here so `redrag --help` stays fast (these pull in FastAPI and Chroma).
@@ -664,9 +599,9 @@ def serve_target(
     model = "MockClient" if config.llm.provider == "mock" else config.ollama.victim_model
     console.print(f"[bold]Campus Handbook Assistant[/] using [cyan]{model}[/]")
     console.print(f"Building the knowledge base ({config.embeddings.provider} embeddings)...")
-    guard = _load_classifier(config)
+    guard = load_classifier(config) if guard else None
     if guard is None:
-        console.print("judge_guard: off (no trained judge model in models/judge-deberta yet)")
+        console.print("judge_guard: off (--no-guard, or no trained model in models/judge-deberta)")
     else:
         console.print(f"judge_guard: available, using [cyan]{guard.name}[/]")
     target_app = create_app(config, guard=guard)
@@ -676,8 +611,84 @@ def serve_target(
 
 @app.command()
 def mcp() -> None:
-    """Start the RedRAG MCP server over stdio."""
-    _not_built_yet("mcp", "M6")
+    """Start the RedRAG MCP server over stdio (an MCP client launches this for you)."""
+    from redrag.mcp_server import serve_stdio
+
+    # Nothing may be printed to stdout here: in stdio mode it carries the protocol.
+    serve_stdio()
+
+
+@app.command("ci-check")
+def ci_check(
+    target_url: str | None = typer.Option(
+        None, help="Target app URL. Default: target.url in config."
+    ),
+    mock_target: bool = typer.Option(
+        False, "--mock-target", help="Scan an in-process mock target instead of a server."
+    ),
+    baseline: Path = typer.Option(
+        Path("config/ci_baseline.json"), help="Thresholds to compare against."
+    ),
+    output_dir: Path | None = typer.Option(
+        None, help="Folder for run results. Default: output.runs_dir in config."
+    ),
+) -> None:
+    """CI gate: run the fixed scan and fail if ASR with all defenses rose above the baseline.
+
+    The judge is rules-only and the target should use the MockClient, so the
+    result is the same on every machine (see redrag/eval/ci_gate.py).
+    """
+    import httpx
+
+    from redrag.attacks.loader import load_attacks, select_attacks
+    from redrag.eval.ci_gate import check, load_baseline
+    from redrag.runner import TargetClient, TargetError, run_scan
+
+    config = load_config()
+    gate = load_baseline(resolve_path(baseline))
+    attacks = select_attacks(load_attacks(categories=gate.categories), gate.max_attacks)
+    if mock_target:
+        http, url = mock_target_client(config), "in-process mock target"
+    else:
+        url = target_url or config.target.url
+        http = httpx.Client(base_url=url, timeout=120)
+
+    judge = build_judge(config, use_gemini=False, use_classifier=False)
+    # "\[" so Rich prints the brackets instead of reading them as a style tag.
+    console.print(
+        f"CI gate: {len(attacks)} attacks x \\[none, all] against [cyan]{url}[/], rules-only"
+    )
+    try:
+        summary = run_scan(
+            attacks,
+            TargetClient(http),
+            judge,
+            ["none", "all"],
+            runs_dir=output_dir or resolve_path(config.output.runs_dir),
+            target_url=url,
+        )
+    except TargetError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=1) from exc
+    finally:
+        http.close()
+
+    write_reports(summary.run_dir, config)
+    result = check(summary.results, gate)
+    table = Table(title="CI red-team gate")
+    for column in ("Configuration", "ASR", "Threshold"):
+        table.add_column(column, justify="left" if column == "Configuration" else "right")
+    table.add_row("none", result.asr_none.format(), f">= {gate.min_asr_no_defenses:.0%}")
+    table.add_row("all", result.asr_all.format(), f"<= {gate.max_asr_all_defenses:.0%}")
+    console.print(table)
+    console.print(f"Report: {summary.run_dir / 'report.html'}")
+    for note in result.notes:
+        console.print(f"[cyan]{note}[/]")
+    if not result.passed:
+        for problem in result.problems:
+            console.print(f"[red]FAIL[/] {problem}")
+        raise typer.Exit(code=1)
+    console.print("[green]PASS[/] defenses are at least as strong as the baseline.")
 
 
 @app.command("show-config")

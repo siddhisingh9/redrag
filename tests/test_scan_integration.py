@@ -218,8 +218,9 @@ def test_normalise_defense_config_rejects_unknown(value):
 def full_scan(tmp_path_factory):
     """Run every seed attack once, with no defenses and with all defenses."""
     tmp = tmp_path_factory.mktemp("full")
-    pipeline = RAGPipeline(store=ChromaStore(tmp / "chroma", "full"), embedder=HashingEmbedder())
-    return run_scan(
+    store = ChromaStore(tmp / "chroma", "full")
+    pipeline = RAGPipeline(store=store, embedder=HashingEmbedder())
+    yield run_scan(
         load_attacks(),
         make_target(pipeline),
         JudgePipeline(SYSTEM_PROMPT),
@@ -228,6 +229,7 @@ def full_scan(tmp_path_factory):
         target_url="test",
         run_id="full",
     )
+    store.close()
 
 
 def test_full_seed_scan_matches_mock_expectations(full_scan):

@@ -1,17 +1,88 @@
-# RedRAG red-team CI gate. PLACEHOLDER, built in M6.
+# RedRAG red-team CI gate (spec 6.9).
 #
-# In M6 this workflow will: on every pull request, install deps, run ruff and
-# pytest, start the target app with the MockClient, run a small fixed scan, and
-# fail if ASR with all defenses on rises above config/ci_baseline.json.
+# On every pull request:
+#   1. install the pinned dependencies (CPU-only PyTorch: no GPU here),
+#   2. lint with ruff and run the test suite (fully offline, MockClient),
+#   3. start the target app with the MockClient,
+#   4. run a fixed scan (all 55 seed attacks, with no defenses and with all defenses)
+#      and FAIL if the attack success rate with all defenses rose above
+#      config/ci_baseline.json.
 #
-# Until then it only runs when triggered by hand, so it never blocks a PR.
+# Why it's reliable: the MockClient, the hashing embedder and the rules-only
+# judge are all deterministic, so the same code always gives the same ASR. No
+# API keys, no Ollama, no model downloads. The scan step takes seconds.
+#
+# The report (report.md + report.html) is uploaded as a build artifact, so you
+# can open it from the workflow run page even when the gate fails.
+
 name: redteam
 
 on:
-  workflow_dispatch:
+  pull_request:
+  workflow_dispatch: # lets you start it by hand from the Actions tab
+
+permissions:
+  contents: read # read-only: this workflow never writes to the repo
+
+concurrency:
+  # A new push to the same PR cancels the run that's still going.
+  group: redteam-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  placeholder:
+  redteam:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      REDRAG_LLM_PROVIDER: mock
+      REDRAG_EMBEDDINGS_PROVIDER: hashing
+      REDRAG_TRACING: "false"
+      PYTHONUTF8: "1" # some attacks are in Hindi
     steps:
-      - run: echo "RedRAG CI gate is built in milestone M6."
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install CPU-only PyTorch
+        # Without this, pip would fetch the multi-GB CUDA build of torch.
+        run: pip install torch==2.14.1 --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -e . --no-deps
+
+      - name: Lint (ruff)
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: Tests (pytest, offline)
+        run: pytest
+
+      - name: Start the target app (MockClient)
+        run: |
+          redrag serve-target --mock --offline-embeddings --no-guard --no-trace \
+            --port 8000 > target.log 2>&1 &
+          # Wait until /health answers (up to 60 s).
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8000/health && exit 0
+            sleep 1
+          done
+          echo "Target app did not start:" && cat target.log && exit 1
+
+      - name: Red-team gate
+        run: redrag ci-check --target-url http://127.0.0.1:8000 --output-dir ci-run
+
+      - name: Upload the scan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: redteam-report
+          path: |
+            ci-run/
+            target.log
+          if-no-files-found: ignore

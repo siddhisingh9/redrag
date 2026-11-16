@@ -20,7 +20,7 @@ runner = CliRunner()
 def test_help_lists_all_commands():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    for command in ["scan", "report", "serve-target", "mcp", "show-config"]:
+    for command in ["scan", "report", "serve-target", "mcp", "ci-check", "show-config"]:
         assert command in result.output
 
 
@@ -35,12 +35,6 @@ def test_python_dash_m_entry_point_works():
     )
     assert result.returncode == 0, result.stderr
     assert "scan" in result.stdout
-
-
-def test_unbuilt_command_exits_with_milestone_hint():
-    result = runner.invoke(app, ["mcp"])
-    assert result.exit_code == 1
-    assert "M6" in result.output
 
 
 def test_scan_mock_target_then_report(tmp_path):

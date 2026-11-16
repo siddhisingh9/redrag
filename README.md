@@ -6,8 +6,9 @@ RedRAG attacks a RAG chatbot, detects when it leaks data or obeys injected
 instructions, scores each attempt with a judge pipeline (rules → fine-tuned
 small classifier → Gemini as backup), and measures how much each defense helps.
 
-> **Status:** early development, milestone **M5 (defense evaluation + tracing)**.
-> `serve-target`, `scan`, `report` and `show-config` work; `mcp` comes in M6.
+> **Status:** milestone **M6 (MCP server + CI gate)**. Everything except the
+> dashboard (M7) works: `serve-target`, `scan`, `report`, `mcp`, `ci-check`, labelling
+> and judge training.
 
 Everything runs on free tools: local models through Ollama, and the Gemini API
 free tier as the only remote model.
@@ -302,11 +303,102 @@ The **rule judge** gives each attack `success`, `fail` or `unsure`. *Unsure* cov
 cases like "I can't say PINEAPPLE-7" (marker present, but refused); M4's
 fine-tuned judge will settle those.
 
-Coming in later milestones:
+### Using RedRAG from an AI assistant (MCP)
 
-| Command | What it does | Milestone |
-|---|---|---|
-| `redrag mcp` | Start the MCP server (stdio) | M6 |
+`redrag mcp` starts an [MCP](https://modelcontextprotocol.io) server, so any MCP
+client (Claude Code, Claude Desktop, VS Code, Cursor, ...) can run RedRAG for you.
+The client starts the server itself, over stdio. You don't run `redrag mcp` by hand.
+
+| Tool | What it does |
+|---|---|
+| `scan_rag_app(target_url, categories?, defenses?, max_attacks?, include_benign?)` | Runs a scan; returns ASR per defense configuration, the attacks that got through, and paths to `report.md` / `report.html`. `target_url="mock"` scans an offline demo target. Default: 10 attacks, `["none", "all"]`. |
+| `list_attacks(category?)` | The seed attacks, with their messages and what counts as success. |
+| `get_report(run_id?)` | Summary + full Markdown report of an earlier scan (`"latest"` by default). |
+
+Point your client at the `redrag` executable inside the virtual environment
+(use your own path; on macOS/Linux it is `.venv/bin/redrag`; in JSON, use forward
+slashes or doubled backslashes):
+
+**Claude Code**
+```bash
+claude mcp add redrag -- C:\path\to\redrag\.venv\Scripts\redrag.exe mcp
+```
+
+**Claude Desktop**: Settings → Developer → Edit Config, then add to `claude_desktop_config.json`:
+```json
+{
+  "mcpServers": {
+    "redrag": {
+      "command": "C:/path/to/redrag/.venv/Scripts/redrag.exe",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+**VS Code**: `.vscode/mcp.json` in your workspace:
+```json
+{
+  "servers": {
+    "redrag": { "type": "stdio", "command": "C:/path/to/redrag/.venv/Scripts/redrag.exe", "args": ["mcp"] }
+  }
+}
+```
+
+Then ask, for example:
+- *"List RedRAG's data exfiltration attacks."*
+- *"Use RedRAG to scan the mock target with 5 attacks and explain the results."*
+- *"Scan http://127.0.0.1:8000 with no defenses and with output_leak_filter, 10 attacks."*
+  (Start the target first with `redrag serve-target`.)
+
+Notes:
+- Paths in the config are relative to the project folder, so the client can start
+  the server from any directory. Settings come from `config/default.yaml` and `.env`
+  as usual.
+- A real scan runs each attack once per defense configuration. Against a 3B model
+  that's a few seconds per attack, so 10 attacks × 2 configurations takes 1–3 minutes.
+  Keep `max_attacks` small if your client has a short tool timeout.
+- Safety: `target_url` must be `http(s)` (or `"mock"`), and `get_report` only accepts
+  plain run ids, so a client can't read files outside `runs/`.
+
+### CI gate (GitHub Actions)
+
+[`.github/workflows/redteam.yml`](.github/workflows/redteam.yml) runs on every pull
+request:
+
+1. installs the pinned dependencies (CPU-only PyTorch),
+2. runs `ruff check`, `ruff format --check` and `pytest`,
+3. starts the target with the MockClient (`redrag serve-target --mock --offline-embeddings --no-guard`),
+4. runs `redrag ci-check`: all 55 seed attacks with no defenses and with all defenses.
+
+The check **fails the PR** if:
+- the ASR with all defenses rises above `max_asr_all_defenses` in
+  [`config/ci_baseline.json`](config/ci_baseline.json) (a defense got weaker);
+- the ASR with no defenses falls below `min_asr_no_defenses` (the attacks or the judge
+  broke; otherwise a judge that never says "success" would pass forever);
+- any attack errors, or "all" turned on different defenses than the baseline.
+
+The scan is **deterministic**: MockClient + hashing embeddings + rules-only judge.
+The same code always gives the same numbers (today: 46/55 without defenses, 13/55 with
+all), so the threshold sits just above 13/55 and **one extra attack getting through
+fails the check**. No API keys or Ollama are needed, and the scan itself takes seconds.
+The report is uploaded as the `redteam-report` artifact on the workflow run page.
+
+Run the same check locally:
+```bash
+redrag ci-check --mock-target                                   # in-process, ~5 s
+# or exactly like CI, against a real server:
+redrag serve-target --mock --offline-embeddings --no-guard      # terminal 1
+redrag ci-check --target-url http://127.0.0.1:8000              # terminal 2
+```
+
+If a change makes the defenses **stronger**, `ci-check` says so and suggests lowering
+`max_asr_all_defenses`, so the improvement is locked in.
+
+To make the check block merging: GitHub → Settings → Branches → add a branch
+protection rule for `main` → *Require status checks to pass* → pick `redteam`.
+(Optional: [`act`](https://github.com/nektos/act) can run the workflow locally,
+but it needs Docker.)
 
 ---
 
@@ -344,12 +436,15 @@ redrag/
   judge/                   rules -> fine-tuned classifier -> Gemini judge pipeline
   eval/                    metrics (ASR/FRR), reports (MD + HTML charts), labels, dataset, judge agreement
   tracing.py               OpenTelemetry spans -> Arize Phoenix
+  runner.py                orchestrates a scan
+  factory.py               builds judge / mock target / reports (shared by CLI, MCP, CI)
+  cli.py                   `redrag` command
+  mcp_server.py            MCP server: scan_rag_app, list_attacks, get_report
+config/ci_baseline.json    CI gate thresholds
+.github/workflows/         redteam.yml: lint + tests + red-team gate on every PR
 data/labels/               your hand labels + latest judge agreement (commit these)
 data/judge_dataset/        exported train/val/test for the notebook
 models/judge-deberta/      the trained judge (gitignored; copied from Kaggle/Colab)
-  runner.py                orchestrates a scan
-  cli.py                   `redrag` command
-  mcp_server.py            MCP server                                                [M6]
 notebooks/                 judge fine-tuning notebook (Kaggle/Colab, free GPU)
 dashboard/                 Streamlit dashboard                                       [M7]
 scripts/smoke_llm.py       checks Ollama + Gemini connectivity
@@ -367,8 +462,8 @@ tests/                     offline pytest suite
 | M2 | Attack library, rule judge, basic scan + report | ✅ |
 | M3 | LangGraph adaptive attacker | ✅ |
 | M4 | Fine-tuned judge (DeBERTa-v3-small) + Gemini backup judge | ✅ (Gemini row skipped: no API key) |
-| M5 | Defense evaluation (ASR/FRR), HTML report, tracing | ✅ in review |
-| M6 | MCP server + GitHub Actions gate | ⏳ |
+| M5 | Defense evaluation (ASR/FRR), HTML report, tracing | ✅ |
+| M6 | MCP server + GitHub Actions gate | ✅ in review |
 | M7 | Dashboard + README polish | ⏳ |
 
 ### Baseline tools (optional, for comparison only)

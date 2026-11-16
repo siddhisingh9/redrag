@@ -237,6 +237,15 @@ class ChromaStore:
             embedding_function=None,
         )
 
+    def close(self) -> None:
+        """Release the database and its open index files.
+
+        A long-running server never needs this. Tests create many stores in one
+        process, and on Windows each open on-disk index holds C file streams (max
+        512 per process), so tests close their stores when done.
+        """
+        self._client.close()
+
     def clear(self) -> None:
         """Delete every chunk by dropping and re-creating the collection."""
         self._client.delete_collection(self._name)
