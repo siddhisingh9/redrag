@@ -8,8 +8,7 @@ blocks along the way.
 Everything runs locally on free tools (Ollama with a 3B model). Gemini's free tier is
 an optional backup judge.
 
-**Demo:** [dashboard](https://redrag.streamlit.app) ·
-[scan reports](https://siddhisingh9.github.io/redrag/)
+**Demo:** [redrag.streamlit.app](https://redrag.streamlit.app)
 
 ![Dashboard overview](docs/screenshots/overview.png)
 
@@ -146,8 +145,8 @@ pytest           # runs offline, no Ollama or API key needed
 ruff check .
 ```
 
-The hosted demo shows the scans in `demo/runs/`, and GitHub Pages serves `docs/`.
-After new scans, update both with `python scripts/build_demo.py`.
+The hosted demo shows the scans in `demo/runs/`. After new scans, update them with
+`python scripts/build_demo.py`.
 
 ```
 redrag/

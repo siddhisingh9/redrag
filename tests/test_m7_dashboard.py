@@ -126,7 +126,7 @@ def test_every_page_renders_on_a_saved_scan(runs):
         tiles
     )
 
-    for page in ["views/attacks.py", "views/lineage.py", "views/label.py"]:
+    for page in ["views/attacks.py", "views/lineage.py", "views/reports.py", "views/label.py"]:
         at.switch_page(page).run()
         assert not at.exception, (page, at.exception)
 
@@ -206,7 +206,7 @@ def test_demo_mode_shows_bundled_scans_read_only():
     # The Label page writes files, so the read-only demo doesn't register it.
     with pytest.raises(ValueError, match="Could not find a navigation page"):
         at.switch_page("views/label.py").run()
-    for page in ["views/attacks.py", "views/lineage.py"]:
+    for page in ["views/attacks.py", "views/lineage.py", "views/reports.py"]:
         at.switch_page(page).run()
         assert not at.exception, (page, at.exception)
 
@@ -233,7 +233,7 @@ sys.meta_path.insert(0, Block())
 from streamlit.testing.v1 import AppTest
 at = AppTest.from_file(sys.argv[1], default_timeout=60).run()
 assert not at.exception, at.exception
-for page in ["views/attacks.py", "views/lineage.py"]:
+for page in ["views/attacks.py", "views/lineage.py", "views/reports.py"]:
     at.switch_page(page).run()
     assert not at.exception, (page, at.exception)
 print("ok")
@@ -254,3 +254,15 @@ def test_dashboard_requirements_are_pinned():
     packages = [line for line in lines.splitlines() if line and not line.startswith("#")]
     assert packages and all("==" in line for line in packages)
     assert not any(line.split("==")[0] in ("torch", "chromadb") for line in packages)
+
+
+def test_report_page_shows_and_offers_the_full_report(runs):
+    """Saved report.html is shown as-is; a scan without one gets it built on the fly."""
+    at = app_test()
+    at.session_state["run_id"] = "20260101-000000"  # the fixture writes no report.html
+    at.run()
+    at.switch_page("views/reports.py").run()
+    assert not at.exception, at.exception
+    assert at.title[0].value == "Report"
+    download = at.get("download_button")[0]
+    assert download.proto.label == "Download HTML"
